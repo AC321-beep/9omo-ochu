@@ -1,0 +1,68 @@
+name: Build
+
+concurrency:
+  group: "build"
+  cancel-in-progress: true
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '*.md'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: "src"
+
+      - name: Checkout builds
+        uses: actions/checkout@v4
+        with:
+          ref: "builds"
+          path: "builds"
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clean old builds
+        run: |
+          rm $GITHUB_WORKSPACE/builds/*.cs3 || true
+          rm $GITHUB_WORKSPACE/builds/*.jar || true
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        
+      - name: Build Plugins
+        env:
+          LIVESPORTS_FIREBASE_API_KEY: ${{ secrets.LIVESPORTS_FIREBASE_API_KEY }}
+          LIVESPORTS_FIREBASE_APP_ID: ${{ secrets.LIVESPORTS_FIREBASE_APP_ID }}
+          LIVESPORTS_FIREBASE_PROJECT_NUMBER: ${{ secrets.LIVESPORTS_FIREBASE_PROJECT_NUMBER }}
+          LIVESPORTS_PROVIDER_SECRET1: ${{ secrets.LIVESPORTS_PROVIDER_SECRET1 }}
+          LIVESPORTS_PROVIDER_SECRET2: ${{ secrets.LIVESPORTS_PROVIDER_SECRET2 }}
+        run: |
+          cd $GITHUB_WORKSPACE/src
+          wget -q "https://github.com/phisher98/cloudstream-extensions-phisher/raw/master/gradle/wrapper/gradle-wrapper.jar" -O gradle/wrapper/gradle-wrapper.jar
+          wget -q "https://github.com/phisher98/cloudstream-extensions-phisher/raw/master/gradlew" -O gradlew
+          chmod +x gradlew
+          ./gradlew make makePluginsJson
+          cp **/build/*.cs3 $GITHUB_WORKSPACE/builds || true
+          cp **/build/*.jar $GITHUB_WORKSPACE/builds || true
+          cp build/plugins.json $GITHUB_WORKSPACE/builds || true
+
+      - name: Push builds
+        run: |
+          cd $GITHUB_WORKSPACE/builds
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add .
+          git commit --amend -m "Build $GITHUB_SHA" || exit 0
+          git push --force
