@@ -1,9 +1,9 @@
 cloudstream {
-    description = "Donghua (Chinese Animation)"
+    description = "Eporner - NSFW Videos"
     authors = listOf("AC321-beep")
     status = 1
-    tvTypes = listOf("Anime")
-    language = "zh"
-    version = 8
-    iconUrl = "https://donghuafun.com/template/shoutu45/assets/images/logo-1.png"
+    tvTypes = listOf("NSFW")
+    language = "en"
+    version = 1
+    iconUrl = "https://www.eporner.com/favicon.ico"
 }
