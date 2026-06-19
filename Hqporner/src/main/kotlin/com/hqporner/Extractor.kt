@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.INFER_TYPE
 
 class Extractor : ExtractorApi() {
     override val name = "HqpornerExtractor"
@@ -20,7 +19,10 @@ class Extractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         val document = app.get(url).document
-        val script = document.selectFirst("script:containsData(do_pl())")?.toString() ?: return
+        val script = document.selectFirst("script:containsData(do_pl())")?.toString()
+            ?: return
+
+        // Extract the obfuscated parts
         val jw = script.substringAfter("replaceAll")
             .substringAfter(",")
             .substringBefore(")")
@@ -31,15 +33,18 @@ class Extractor : ExtractorApi() {
         if (parts.size < 3) return
         val (one, _, three) = parts
 
+        // Extract the first part (domain)
         val first = Regex("""$one\s*=\s*"(.*?)";""").find(script)?.groupValues?.get(1)
             ?.removePrefix("//")
             ?.removeSuffix("/")
             ?: return
 
+        // Extract the third part (path)
         val third = Regex("""$three\s*=\s*"(.*?)";""").find(script)?.groupValues?.get(1) ?: return
 
         val baseUrl = "https://$first/pubs/$third"
 
+        // Find available qualities
         val regex = Regex("""title=\\?"(\d+p|4K)""")
         val matches = regex.findAll(script)
         val qualities = mutableListOf<String>()
@@ -48,10 +53,11 @@ class Extractor : ExtractorApi() {
             if (quality == "4K") {
                 qualities.add("2160")
             } else {
-                qualities.add(quality.dropLast(1))
+                qualities.add(quality.dropLast(1)) // remove 'p'
             }
         }
 
+        // If no qualities found, add default
         if (qualities.isEmpty()) {
             qualities.add("1080")
         }
@@ -62,8 +68,7 @@ class Extractor : ExtractorApi() {
                 newExtractorLink(
                     source = name,
                     name = name,
-                    url = videoUrl,
-                    type = INFER_TYPE
+                    url = videoUrl
                 ) {
                     this.referer = mainUrl
                     this.quality = getQualityFromName(quality)
