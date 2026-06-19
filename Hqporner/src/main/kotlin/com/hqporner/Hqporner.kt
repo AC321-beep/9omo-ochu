@@ -33,6 +33,7 @@ class Hqporner : MainAPI() {
         val url = if (request.data.isBlank()) mainUrl else "$mainUrl/${request.data}"
         val document = app.get(url).document
 
+        // Actual container for each video
         val videoElements = document.select("div.img-container")
             .ifEmpty { document.select("div.box div.row section") }
             .ifEmpty { document.select("section.video-item") }
@@ -50,11 +51,13 @@ class Hqporner : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse {
-        val title = this.select("h2").text()
-            .ifEmpty { this.select("h3 a").text() }
-            .ifEmpty { this.select("a[title]").attr("title") }
-            .trim()
-            .ifEmpty { "No Title" }
+        // Title is inside the next sibling div with padding style
+        val titleElement = this.nextElementSibling()
+        val title = titleElement?.select("h2")?.text()
+            ?: this.select("h2").text() // fallback if structure changes
+            ?: this.select("h3 a").text()
+            ?: this.select("a[title]").attr("title")
+            ?: "No Title"
 
         val href = this.select("a[href^='/hdporn/']").attr("href")
             .ifEmpty { this.select("h3 a").attr("href") }
@@ -67,7 +70,7 @@ class Hqporner : MainAPI() {
         if (posterUrl.isNullOrBlank()) posterUrl = this.select("img.lazy").attr("data-src")
 
         return newMovieSearchResponse(
-            fixTitle(title),
+            fixTitle(title.trim()),
             fixUrl(href),
             TvType.NSFW
         ) {
@@ -131,6 +134,7 @@ class Hqporner : MainAPI() {
         val document = app.get(data).document
         val docString = document.toString()
 
+        // Extract the iframe src – the actual player URL
         var rawUrl = Regex("""<iframe[^>]*src=["']//(.*?)["']""")
             .find(docString)?.groupValues?.get(1)
         if (rawUrl.isNullOrBlank()) {
