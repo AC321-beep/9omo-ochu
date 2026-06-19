@@ -26,8 +26,8 @@ class Eporner : MainAPI() {
         "cat/hd-1080p" to "1080 Porn",
         "cat/4k-porn" to "4K Porn",
         "recommendations" to "Recommendation Videos",
-        "cat/creampie" to "Creampie",               // NEW
-        "cat/family-therapy" to "Family Therapy"   // NEW
+        "cat/creampie" to "Creampie",                // added
+        "cat/family-therapy" to "Family Therapy"    // added
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
