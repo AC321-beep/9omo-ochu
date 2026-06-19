@@ -33,7 +33,6 @@ class Hqporner : MainAPI() {
         val url = if (request.data.isBlank()) mainUrl else "$mainUrl/${request.data}"
         val document = app.get(url).document
 
-        // New selectors based on actual HTML
         val videoElements = document.select("div.img-container")
             .ifEmpty { document.select("div.box div.row section") }
             .ifEmpty { document.select("section.video-item") }
@@ -51,19 +50,11 @@ class Hqporner : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse {
-        // The link is inside the img-container, and the title is in the following div
-        val titleElement = if (this.tagName() == "div" && this.hasClass("img-container")) {
-            // Find the next sibling div with padding
-            val next = this.nextElementSibling()
-            if (next?.tagName() == "div" && next.hasAttr("style") && next.text().isNotBlank()) next else null
-        } else {
-            this
-        }
-
-        val title = titleElement?.select("h2")?.text()
-            ?: this.select("h3 a").text()
-            ?: this.select("a[title]").attr("title")
-            ?: "No Title"
+        val title = this.select("h2").text()
+            .ifEmpty { this.select("h3 a").text() }
+            .ifEmpty { this.select("a[title]").attr("title") }
+            .trim()
+            .ifEmpty { "No Title" }
 
         val href = this.select("a[href^='/hdporn/']").attr("href")
             .ifEmpty { this.select("h3 a").attr("href") }
@@ -76,7 +67,7 @@ class Hqporner : MainAPI() {
         if (posterUrl.isNullOrBlank()) posterUrl = this.select("img.lazy").attr("data-src")
 
         return newMovieSearchResponse(
-            fixTitle(title.trim()),
+            fixTitle(title),
             fixUrl(href),
             TvType.NSFW
         ) {
@@ -140,27 +131,20 @@ class Hqporner : MainAPI() {
         val document = app.get(data).document
         val docString = document.toString()
 
-        // Extract the iframe src – the player URL we need
         var rawUrl = Regex("""<iframe[^>]*src=["']//(.*?)["']""")
             .find(docString)?.groupValues?.get(1)
         if (rawUrl.isNullOrBlank()) {
             rawUrl = Regex("""url:\s*['"]//(.*?)['"]""").find(docString)?.groupValues?.get(1)
         }
         if (rawUrl.isNullOrBlank()) {
-            // Try to find the altplayer call
             rawUrl = Regex("""altplayer\.php\?i=//(.*?)'""").find(docString)?.groupValues?.get(1)
         }
 
-        if (rawUrl.isNullOrBlank()) {
-            return false
-        }
+        if (rawUrl.isNullOrBlank()) return false
 
-        // Ensure it's a full URL
         val finalUrl = if (rawUrl.startsWith("http")) rawUrl else "https://$rawUrl"
-        // Append a trailing slash if missing (mydaddy.cc expects it)
         val playerUrl = if (!finalUrl.endsWith("/")) "$finalUrl/" else finalUrl
 
-        // Now call the extractor on that URL
         loadExtractor(playerUrl, subtitleCallback, callback)
         return true
     }
