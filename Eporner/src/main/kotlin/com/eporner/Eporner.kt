@@ -16,10 +16,11 @@ class Eporner : MainAPI() {
     override val supportedTypes       = setOf(TvType.NSFW)
     override val vpnStatus            = VPNStatus.MightBeNeeded
 
-    override val mainPage = mainPageOf(
-        "" to "Recent Videos",                     // 1st
-        "cat/creampie" to "Creampie",              // 2nd
-        "cat/family-therapy" to "Family Therapy",  // 3rd
+    // Use a LinkedHashMap to preserve order explicitly
+    override val mainPage = linkedMapOf(
+        "" to "Recent Videos",
+        "cat/creampie" to "Creampie",
+        "cat/family-therapy" to "Family Therapy",
         "best-videos" to "Best Videos",
         "top-rated" to "Top Rated",
         "most-viewed" to "Most Viewed",
@@ -31,31 +32,72 @@ class Eporner : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // Build URL
         val url = if (request.data.isBlank()) {
             "$mainUrl/page/$page/"
         } else {
             "$mainUrl/${request.data}/$page/"
         }
+
         val document = app.get(url).document
-        val home = document.select("div.mb").mapNotNull { it.toSearchResult() }
+
+        // Try multiple selectors to catch all video items
+        val videoElements = document.select("#div-search-results div.mb")
+            .ifEmpty { document.select("div.mb") }
+            .ifEmpty { document.select("div.video-block") }
+            .ifEmpty { document.select("div[class*='video']") }
+            .ifEmpty { document.select("div[class*='mb']") }
+
+        val home = videoElements.mapNotNull { it.toSearchResult() }
+
+        // If we got nothing, try without the page number (maybe first page is 0-indexed?)
+        val finalList = if (home.isEmpty() && page == 1) {
+            // Try without page parameter (some categories use /cat/xxx/ without page)
+            val altUrl = if (request.data.isBlank()) mainUrl else "$mainUrl/${request.data}"
+            val altDoc = app.get(altUrl).document
+            val altElements = altDoc.select("#div-search-results div.mb")
+                .ifEmpty { altDoc.select("div.mb") }
+            altElements.mapNotNull { it.toSearchResult() }
+        } else home
+
         return newHomePageResponse(
-            list    = HomePageList(
+            list = HomePageList(
                 name = request.name,
-                list = home,
+                list = finalList,
                 isHorizontalImages = true
             ),
-            hasNext = true
+            hasNext = finalList.isNotEmpty() // assume more pages if we have results
         )
     }
 
     private fun Element.toSearchResult(): SearchResponse {
-        val title = fixTitle(this.select("div.mbunder p.mbtit a").text() ?: "No Title").trim()
-        val href = fixUrl(this.select("div.mbcontent a").attr("href"))
+        // Title: try multiple selectors
+        val title = this.select("div.mbunder p.mbtit a").text()
+            .ifEmpty { this.select("a[title]").attr("title") }
+            .ifEmpty { this.select("h3 a").text() }
+            .ifEmpty { this.select("p.mbtit a").text() }
+            .trim()
+            .ifEmpty { "No Title" }
+
+        // Link: try multiple selectors
+        val href = this.select("div.mbcontent a").attr("href")
+            .ifEmpty { this.select("a[href*='/video/']").attr("href") }
+            .ifEmpty { this.select("a[href^='/video/']").attr("href") }
+
+        // Poster: try data-src, src, data-original
         var posterUrl = this.selectFirst("img")?.attr("data-src")
         if (posterUrl.isNullOrBlank()) {
             posterUrl = this.selectFirst("img")?.attr("src")
         }
-        return newMovieSearchResponse(title, href, TvType.NSFW) {
+        if (posterUrl.isNullOrBlank()) {
+            posterUrl = this.selectFirst("img[data-original]")?.attr("data-original")
+        }
+
+        return newMovieSearchResponse(
+            fixTitle(title),
+            fixUrl(href),
+            TvType.NSFW
+        ) {
             this.posterUrl = posterUrl
         }
     }
@@ -63,7 +105,9 @@ class Eporner : MainAPI() {
     override suspend fun search(query: String, page: Int): SearchResponseList? {
         val subquery = query.replace(" ", "-")
         val document = app.get("${mainUrl}/search/$subquery/$page").document
-        val results = document.select("div.mb").mapNotNull { it.toSearchResult() }
+        val results = document.select("#div-search-results div.mb")
+            .ifEmpty { document.select("div.mb") }
+            .mapNotNull { it.toSearchResult() }
         val hasNext = results.isNotEmpty()
         return newSearchResponseList(results, hasNext)
     }
