@@ -14,10 +14,10 @@ class Hqporner : MainAPI() {
     override val supportedTypes       = setOf(TvType.NSFW)
     override val vpnStatus            = VPNStatus.MightBeNeeded
 
-    // Order: 1. Recent Videos (homepage), 2. Creampie, then the rest
+    // Order: 1. Recent Videos, 2. Creampie, then the rest
     override val mainPage = mainPageOf(
-        "" to "Recent Videos",                     // #1
-        "category/creampie" to "Creampie",         // #2
+        "" to "Recent Videos",
+        "category/creampie" to "Creampie",
         "category/milf" to "Milf",
         "category/asian" to "Asian",
         "category/japanese-girls-porn" to "Japanese",
@@ -31,16 +31,9 @@ class Hqporner : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // For Recent Videos (empty data), use mainUrl directly
-        val url = if (request.data.isBlank()) {
-            mainUrl
-        } else {
-            "$mainUrl/${request.data}"
-        }
-
+        val url = if (request.data.isBlank()) mainUrl else "$mainUrl/${request.data}"
         val document = app.get(url).document
 
-        // Multiple selectors for robustness
         val videoElements = document.select("div.box.page-content div.row section")
             .ifEmpty { document.select("div.box div.row section") }
             .ifEmpty { document.select("section.video-item") }
@@ -70,12 +63,8 @@ class Hqporner : MainAPI() {
             .ifEmpty { this.select("a[href^='/video/']").attr("href") }
 
         var posterUrl = this.select("img").attr("src")
-        if (posterUrl.isNullOrBlank()) {
-            posterUrl = this.select("img[data-src]").attr("data-src")
-        }
-        if (posterUrl.isNullOrBlank()) {
-            posterUrl = this.select("img[data-original]").attr("data-original")
-        }
+        if (posterUrl.isNullOrBlank()) posterUrl = this.select("img[data-src]").attr("data-src")
+        if (posterUrl.isNullOrBlank()) posterUrl = this.select("img[data-original]").attr("data-original")
 
         return newMovieSearchResponse(
             fixTitle(title),
