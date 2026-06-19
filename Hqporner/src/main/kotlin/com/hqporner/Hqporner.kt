@@ -14,7 +14,6 @@ class Hqporner : MainAPI() {
     override val supportedTypes       = setOf(TvType.NSFW)
     override val vpnStatus            = VPNStatus.MightBeNeeded
 
-    // Order: 1. Recent Videos, 2. Creampie, then the rest
     override val mainPage = mainPageOf(
         "" to "Recent Videos",
         "category/creampie" to "Creampie",
@@ -62,14 +61,18 @@ class Hqporner : MainAPI() {
             .ifEmpty { this.select("a[href*='/video/']").attr("href") }
             .ifEmpty { this.select("a[href^='/video/']").attr("href") }
 
-        // Try multiple poster sources
+        // Poster extraction with multiple fallbacks
         var posterUrl = this.select("img").attr("src")
         if (posterUrl.isNullOrBlank()) posterUrl = this.select("img[data-src]").attr("data-src")
         if (posterUrl.isNullOrBlank()) posterUrl = this.select("img[data-original]").attr("data-original")
         if (posterUrl.isNullOrBlank()) posterUrl = this.select("img[data-lazy-src]").attr("data-lazy-src")
         if (posterUrl.isNullOrBlank()) posterUrl = this.select("img.lazy").attr("data-src")
-        if (posterUrl.isNullOrBlank()) posterUrl = this.select("img[data-srcset]").attr("data-srcset")?.split(" ")?.firstOrNull()
-        if (posterUrl.isNullOrBlank()) posterUrl = this.select("img[srcset]").attr("srcset")?.split(" ")?.firstOrNull()
+        if (posterUrl.isNullOrBlank()) {
+            posterUrl = this.select("img[data-srcset]").attr("data-srcset").split(" ").firstOrNull() ?: ""
+        }
+        if (posterUrl.isNullOrBlank()) {
+            posterUrl = this.select("img[srcset]").attr("srcset").split(" ").firstOrNull() ?: ""
+        }
 
         return newMovieSearchResponse(
             fixTitle(title),
@@ -102,18 +105,14 @@ class Hqporner : MainAPI() {
             .trim()
             .ifEmpty { "No Title" }
 
-        // Try to get poster from the video page
         var poster = loadData.posterUrl
         if (poster.isNullOrBlank()) {
-            // Try meta og:image
             poster = document.select("meta[property='og:image']").attr("content")
         }
         if (poster.isNullOrBlank()) {
-            // Try from video player poster or thumbnail
             poster = document.select("video[poster]").attr("poster")
         }
         if (poster.isNullOrBlank()) {
-            // Try any img with high resolution
             poster = document.select("img[src*='thumbs']").attr("src")
         }
         if (poster.isNullOrBlank()) {
