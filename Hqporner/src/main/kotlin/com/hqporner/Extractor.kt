@@ -7,8 +7,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
 
-open class Extractor : ExtractorApi() {
-    override val name = "Extractor"
+class Extractor : ExtractorApi() {
+    override val name = "HqpornerExtractor"
     override val mainUrl = "https://www.mydaddy.cc"
     override val requiresReferer = true
 
