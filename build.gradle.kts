@@ -74,3 +74,36 @@ subprojects {
 task<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
+
+// ========== Auto-generate repo.json after build ==========
+tasks.register("generateRepoJson") {
+    doLast {
+        // Determine the builds directory – same as used by the workflow
+        val buildsDir = System.getenv("GITHUB_WORKSPACE")?.let { File(it, "builds") }
+            ?: File(rootDir, "builds")   // fallback for local builds
+        buildsDir.mkdirs()
+
+        val repoJson = File(buildsDir, "repo.json")
+        val repoName = "9omo-ochu"
+        val repoUrl = System.getenv("GITHUB_REPOSITORY") ?: "AC321-beep/9omo-ochu"
+
+        repoJson.writeText(
+            """
+            {
+                "name": "$repoName",
+                "description": "CloudStream plugins by AC321-beep",
+                "manifestVersion": 1,
+                "pluginLists": [
+                    "https://raw.githubusercontent.com/$repoUrl/refs/heads/builds/plugins.json"
+                ]
+            }
+            """.trimIndent()
+        )
+        println("Generated $repoJson")
+    }
+}
+
+// Make it run right after makePluginsJson
+tasks.named("makePluginsJson") {
+    finalizedBy("generateRepoJson")
+}
