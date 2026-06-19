@@ -61,7 +61,6 @@ class Hqporner : MainAPI() {
             .ifEmpty { this.select("a[href*='/video/']").attr("href") }
             .ifEmpty { this.select("a[href^='/video/']").attr("href") }
 
-        // Poster extraction with multiple fallbacks
         var posterUrl = this.select("img").attr("src")
         if (posterUrl.isNullOrBlank()) posterUrl = this.select("img[data-src]").attr("data-src")
         if (posterUrl.isNullOrBlank()) posterUrl = this.select("img[data-original]").attr("data-original")
@@ -142,12 +141,32 @@ class Hqporner : MainAPI() {
         val document = app.get(data).document
         val docString = document.toString()
 
-        val rawUrl = Regex("""url: '/blocks/altplayer\.php\?i=//(.*?)',""")
+        // Try multiple patterns to extract the player URL
+        var rawUrl = Regex("""url: '/blocks/altplayer\.php\?i=//(.*?)',""")
             .find(docString)?.groupValues?.get(1)
-            ?: Regex("""url:\s*'//(.*?)'""").find(docString)?.groupValues?.get(1)
-            ?: return false
+        if (rawUrl.isNullOrBlank()) {
+            rawUrl = Regex("""url:\s*['"]//(.*?)['"]""").find(docString)?.groupValues?.get(1)
+        }
+        if (rawUrl.isNullOrBlank()) {
+            // Try to find iframe src
+            rawUrl = document.select("iframe[src*='mydaddy']").attr("src")
+                .removePrefix("//")
+        }
+        if (rawUrl.isNullOrBlank()) {
+            // Fallback: try to find any script with do_pl
+            val script = document.selectFirst("script:containsData(do_pl())")?.toString()
+            if (script != null) {
+                val match = Regex("""url:\s*['"]//(.*?)['"]""").find(script)
+                rawUrl = match?.groupValues?.get(1)
+            }
+        }
 
-        val finalUrl = "https://$rawUrl"
+        val finalUrl = if (!rawUrl.isNullOrBlank()) {
+            if (rawUrl.startsWith("http")) rawUrl else "https://$rawUrl"
+        } else {
+            return false
+        }
+
         loadExtractor(finalUrl, subtitleCallback, callback)
         return true
     }
