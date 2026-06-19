@@ -1,13 +1,12 @@
 package com.eporner
 
-import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
+import android.content.Context
 
 @CloudstreamPlugin
-class DonghuafunPlugin : Plugin() {
+class EpornerProvider : Plugin() {
     override fun load(context: Context) {
-        // Registers your updated 4K Donghua Scraper
-        registerMainAPI(DonghuaFunProvider())
+        registerMainAPI(Eporner())
     }
 }
