@@ -16,19 +16,13 @@ class Eporner : MainAPI() {
     override val supportedTypes       = setOf(TvType.NSFW)
     override val vpnStatus            = VPNStatus.MightBeNeeded
 
-    // Use a LinkedHashMap to preserve order explicitly
+    // Only these 5 categories – order is preserved
     override val mainPage = linkedMapOf(
         "" to "Recent Videos",
         "cat/creampie" to "Creampie",
         "cat/family-therapy" to "Family Therapy",
-        "best-videos" to "Best Videos",
-        "top-rated" to "Top Rated",
-        "most-viewed" to "Most Viewed",
         "cat/milf" to "Milf",
-        "cat/japanese" to "Japanese",
-        "cat/hd-1080p" to "1080 Porn",
-        "cat/4k-porn" to "4K Porn",
-        "recommendations" to "Recommendation Videos"
+        "most-viewed" to "Most Viewed"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -50,9 +44,8 @@ class Eporner : MainAPI() {
 
         val home = videoElements.mapNotNull { it.toSearchResult() }
 
-        // If we got nothing, try without the page number (maybe first page is 0-indexed?)
+        // If we got nothing and it's page 1, try without page number
         val finalList = if (home.isEmpty() && page == 1) {
-            // Try without page parameter (some categories use /cat/xxx/ without page)
             val altUrl = if (request.data.isBlank()) mainUrl else "$mainUrl/${request.data}"
             val altDoc = app.get(altUrl).document
             val altElements = altDoc.select("#div-search-results div.mb")
@@ -66,7 +59,7 @@ class Eporner : MainAPI() {
                 list = finalList,
                 isHorizontalImages = true
             ),
-            hasNext = finalList.isNotEmpty() // assume more pages if we have results
+            hasNext = finalList.isNotEmpty()
         )
     }
 
