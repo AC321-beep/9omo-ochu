@@ -77,20 +77,19 @@ task<Delete>("clean") {
 
 // ========== Auto-generate repo.json after build ==========
 tasks.register("generateRepoJson") {
+    // This avoids the configuration cache serialization error
+    notCompatibleWithConfigurationCache("This task writes a repo.json file at runtime")
+    
     doLast {
-        // Determine the builds directory – same as used by the workflow
         val buildsDir = System.getenv("GITHUB_WORKSPACE")?.let { File(it, "builds") }
-            ?: File(rootDir, "builds")   // fallback for local builds
+            ?: File(rootDir, "builds")
         buildsDir.mkdirs()
-
         val repoJson = File(buildsDir, "repo.json")
-        val repoName = "9omo-ochu"
         val repoUrl = System.getenv("GITHUB_REPOSITORY") ?: "AC321-beep/9omo-ochu"
-
         repoJson.writeText(
             """
             {
-                "name": "$repoName",
+                "name": "9omo-ochu",
                 "description": "CloudStream plugins by AC321-beep",
                 "manifestVersion": 1,
                 "pluginLists": [
@@ -103,7 +102,7 @@ tasks.register("generateRepoJson") {
     }
 }
 
-// Make it run right after makePluginsJson
+// Make it run right after makePluginsJson – so it's part of the same build command
 tasks.named("makePluginsJson") {
     finalizedBy("generateRepoJson")
 }
