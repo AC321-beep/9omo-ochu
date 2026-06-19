@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.INFER_TYPE
 
 class Extractor : ExtractorApi() {
     override val name = "HqpornerExtractor"
@@ -62,9 +63,10 @@ class Extractor : ExtractorApi() {
                     source = name,
                     name = name,
                     url = videoUrl,
-                    quality = getQualityFromName(quality)
+                    type = INFER_TYPE
                 ) {
                     this.referer = mainUrl
+                    this.quality = getQualityFromName(quality)
                 }
             )
         }
