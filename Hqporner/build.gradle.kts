@@ -8,7 +8,7 @@ cloudstream {
     status = 1
     tvTypes = listOf("NSFW")
     language = "en"
-    version = 1
+    version = 2
     iconUrl = "https://hqporner.com/favicon.ico"
 }
 
