@@ -16,8 +16,8 @@ class Eporner : MainAPI() {
     override val supportedTypes       = setOf(TvType.NSFW)
     override val vpnStatus            = VPNStatus.MightBeNeeded
 
-    // Only these 5 categories – order is preserved
-    override val mainPage = linkedMapOf(
+    // Order is preserved by the order of pairs in mainPageOf
+    override val mainPage = mainPageOf(
         "" to "Recent Videos",
         "cat/creampie" to "Creampie",
         "cat/family-therapy" to "Family Therapy",
@@ -26,7 +26,6 @@ class Eporner : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Build URL
         val url = if (request.data.isBlank()) {
             "$mainUrl/page/$page/"
         } else {
@@ -35,7 +34,6 @@ class Eporner : MainAPI() {
 
         val document = app.get(url).document
 
-        // Try multiple selectors to catch all video items
         val videoElements = document.select("#div-search-results div.mb")
             .ifEmpty { document.select("div.mb") }
             .ifEmpty { document.select("div.video-block") }
@@ -44,7 +42,6 @@ class Eporner : MainAPI() {
 
         val home = videoElements.mapNotNull { it.toSearchResult() }
 
-        // If we got nothing and it's page 1, try without page number
         val finalList = if (home.isEmpty() && page == 1) {
             val altUrl = if (request.data.isBlank()) mainUrl else "$mainUrl/${request.data}"
             val altDoc = app.get(altUrl).document
@@ -64,7 +61,6 @@ class Eporner : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse {
-        // Title: try multiple selectors
         val title = this.select("div.mbunder p.mbtit a").text()
             .ifEmpty { this.select("a[title]").attr("title") }
             .ifEmpty { this.select("h3 a").text() }
@@ -72,12 +68,10 @@ class Eporner : MainAPI() {
             .trim()
             .ifEmpty { "No Title" }
 
-        // Link: try multiple selectors
         val href = this.select("div.mbcontent a").attr("href")
             .ifEmpty { this.select("a[href*='/video/']").attr("href") }
             .ifEmpty { this.select("a[href^='/video/']").attr("href") }
 
-        // Poster: try data-src, src, data-original
         var posterUrl = this.selectFirst("img")?.attr("data-src")
         if (posterUrl.isNullOrBlank()) {
             posterUrl = this.selectFirst("img")?.attr("src")
