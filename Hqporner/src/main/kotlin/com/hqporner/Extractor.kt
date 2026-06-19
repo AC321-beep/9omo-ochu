@@ -57,7 +57,7 @@ class Extractor : ExtractorApi() {
                                 url = videoUrl
                             ) {
                                 this.referer = ""
-                                this.quality = getQualityFromName(quality)
+                                this.quality = getQualityFromName(quality) ?: 0
                             }
                         )
                         linksFound = true
@@ -66,16 +66,16 @@ class Extractor : ExtractorApi() {
             }
         }
 
-        // ---------- Method 2: Fallback to <source> tags (from altplayer page) ----------
+        // ---------- Method 2: Fallback to <source> tags ----------
         if (!linksFound) {
             val sources = document.select("source")
             if (sources.isNotEmpty()) {
                 sources.forEach { source ->
                     val src = source.attr("src")
                     if (src.isNotBlank()) {
-                        // Try to get quality from filename or default
+                        // Try to extract quality from filename
                         val quality = Regex("""/(\d+)\.mp4""").find(src)?.groupValues?.get(1)?.toIntOrNull()
-                            ?: Qualities.Unknown.value
+                            ?: getQualityFromName("1080p") ?: 0
                         callback.invoke(
                             newExtractorLink(
                                 source = name,
@@ -92,26 +92,24 @@ class Extractor : ExtractorApi() {
             }
         }
 
-        // ---------- Method 3: Last resort – find any .mp4 URL ----------
+        // ---------- Method 3: Last resort – any .mp4 URL ----------
         if (!linksFound) {
             val mp4Regex = Regex("""(https?://[^"'\s]+\.mp4)""")
             val matches = mp4Regex.findAll(html)
             matches.forEach { match ->
-                val url = match.groupValues[1]
+                val foundUrl = match.groupValues[1]
                 callback.invoke(
                     newExtractorLink(
                         source = name,
                         name = name,
-                        url = url
+                        url = foundUrl
                     ) {
                         this.referer = ""
-                        this.quality = getQualityFromName("unknown")
+                        this.quality = getQualityFromName("1080p") ?: 0
                     }
                 )
                 linksFound = true
             }
         }
-
-        // If still no links, we've done our best.
     }
 }
