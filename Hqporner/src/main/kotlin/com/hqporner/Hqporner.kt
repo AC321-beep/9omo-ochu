@@ -84,13 +84,24 @@ class Hqporner : MainAPI() {
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
         val document = app.get(data).document
         val doc = document.toString()
-        val rawurl = Regex("""url: '/blocks/altplayer\.php\?i=//(.*?)',""").find(doc)?.groupValues?.get(1) ?:""
-        val href = "https://$rawurl"
-        loadExtractor(
-            href,
-            subtitleCallback,
-            callback
-        )
+
+        // 1. Try iframe src (most common)
+        var rawurl = Regex("""<iframe[^>]*src=["']//(.*?)["']""").find(doc)?.groupValues?.get(1)
+        
+        // 2. Fallback: old altplayer pattern
+        if (rawurl.isNullOrBlank()) {
+            rawurl = Regex("""url: '/blocks/altplayer\.php\?i=//(.*?)',""").find(doc)?.groupValues?.get(1)
+        }
+        
+        // 3. Another fallback: any url: '//...' 
+        if (rawurl.isNullOrBlank()) {
+            rawurl = Regex("""url:\s*['"]//(.*?)['"]""").find(doc)?.groupValues?.get(1)
+        }
+
+        if (rawurl.isNullOrBlank()) return false
+
+        val href = if (rawurl.startsWith("http")) rawurl else "https://$rawurl"
+        loadExtractor(href, subtitleCallback, callback)
         return true
     }
 
