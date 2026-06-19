@@ -8,6 +8,6 @@ import android.content.Context
 class HqpornerPlugin : Plugin() {
     override fun load(context: Context) {
         registerMainAPI(Hqporner())
-        registerExtractorAPI(Extractor())   // now uses the class named "Extractor"
+        registerExtractorAPI(Extractor())
     }
 }
