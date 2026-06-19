@@ -1,4 +1,4 @@
-package com.livesports
+package com.perverzija
 
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import okhttp3.MediaType.Companion.toMediaType

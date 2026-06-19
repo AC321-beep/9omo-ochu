@@ -1,4 +1,4 @@
-package com.donghuastream
+package com.fullporner
 
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin

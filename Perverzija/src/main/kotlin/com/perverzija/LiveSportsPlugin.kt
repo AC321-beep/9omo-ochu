@@ -1,4 +1,4 @@
-package com.livesports
+package com.perverzija
 
 import android.content.Context
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin

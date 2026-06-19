@@ -1,4 +1,4 @@
-package com.livesports
+package com.perverzija
 
 import android.os.Handler
 import android.os.Looper

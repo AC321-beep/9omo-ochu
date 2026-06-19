@@ -1,4 +1,4 @@
-package com.myanimelive
+package com.hqporner
 
 import android.util.Log
 import com.lagradost.cloudstream3.*

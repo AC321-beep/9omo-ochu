@@ -1,4 +1,4 @@
-package com.myanimelive
+package com.hqporner
 
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.ExtractorApi

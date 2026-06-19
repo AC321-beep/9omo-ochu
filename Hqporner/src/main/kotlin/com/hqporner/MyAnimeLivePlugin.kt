@@ -1,4 +1,4 @@
-package com.myanimelive
+package com.hqporner
 
 import android.content.Context
 import com.lagradost.cloudstream3.extractors.Dailymotion

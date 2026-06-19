@@ -1,4 +1,4 @@
-package com.livesports
+package com.perverzija
 
 import com.lagradost.cloudstream3.base64DecodeArray
 import javax.crypto.Cipher

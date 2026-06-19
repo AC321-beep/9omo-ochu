@@ -1,5 +1,5 @@
 android {
-    namespace = "com.myanimelive"
+    namespace = "com.hqporner"
 }
 
 cloudstream {
