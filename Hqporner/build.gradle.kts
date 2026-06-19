@@ -3,20 +3,18 @@ android {
 }
 
 cloudstream {
-    description = "Chinese Anime (English Sub)"
+    description = "Hqporner - NSFW Videos"
     authors = listOf("AC321-beep")
     status = 1
-    tvTypes = listOf("Anime")
+    tvTypes = listOf("NSFW")
     language = "en"
-    version = 4
-    iconUrl = "https://myanime.live/favicon.ico"
+    version = 1
+    iconUrl = "https://hqporner.com/favicon.ico"
 }
 
 dependencies {
-    // ACTIVE FOR COMPILATION: 
-    // We keep this active so YoutubeExtractor.kt compiles without errors, 
-    // even though the extractor itself is currently dormant in the provider.
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.3")
-    
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    // The root build already provides common dependencies (jsoup, NiceHttp, etc.)
+    // No extra dependencies are needed for Hqporner – the extractor works without them.
+    // If you need coroutines, uncomment the line below, but it's not required.
+    // implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
