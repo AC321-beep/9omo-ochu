@@ -17,7 +17,9 @@ class Eporner : MainAPI() {
     override val vpnStatus            = VPNStatus.MightBeNeeded
 
     override val mainPage = mainPageOf(
-        "" to "Recent Videos",
+        "" to "Recent Videos",                     // 1st
+        "cat/creampie" to "Creampie",              // 2nd
+        "cat/family-therapy" to "Family Therapy",  // 3rd
         "best-videos" to "Best Videos",
         "top-rated" to "Top Rated",
         "most-viewed" to "Most Viewed",
@@ -25,14 +27,17 @@ class Eporner : MainAPI() {
         "cat/japanese" to "Japanese",
         "cat/hd-1080p" to "1080 Porn",
         "cat/4k-porn" to "4K Porn",
-        "recommendations" to "Recommendation Videos",
-        "cat/creampie" to "Creampie",                // added
-        "cat/family-therapy" to "Family Therapy"    // added
+        "recommendations" to "Recommendation Videos"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get("$mainUrl/${request.data}/$page/").document
-        val home = document.select("#div-search-results div.mb").mapNotNull { it.toSearchResult() }
+        val url = if (request.data.isBlank()) {
+            "$mainUrl/page/$page/"
+        } else {
+            "$mainUrl/${request.data}/$page/"
+        }
+        val document = app.get(url).document
+        val home = document.select("div.mb").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(
             list    = HomePageList(
                 name = request.name,
@@ -59,7 +64,7 @@ class Eporner : MainAPI() {
         val subquery = query.replace(" ", "-")
         val document = app.get("${mainUrl}/search/$subquery/$page").document
         val results = document.select("div.mb").mapNotNull { it.toSearchResult() }
-        val hasNext = if (results.isEmpty()) false else true
+        val hasNext = results.isNotEmpty()
         return newSearchResponseList(results, hasNext)
     }
 
@@ -111,7 +116,6 @@ class Eporner : MainAPI() {
         return true
     }
 
-    // Thanks to https://github.com/alfa-addon/addon/blob/2a3c9d5e4d35f8420e680d2ee8dd31291bbc727e/plugin.video.alfa/servers/eporner.py#L26 for Code
     fun base36(hash: String): String {
         return if (hash.length >= 32) {
             val part1 = BigInteger(hash.substring(0, 8), 16).toString(36)
