@@ -8,7 +8,7 @@ import org.jsoup.nodes.Element
 class HQPornerProvider : MainAPI() {
     override var mainUrl = "https://hqporner.com"
     override var name = "HQPorner"
-    override val lang = "en"
+    override var lang = "en"                     // MUST be var
     override val hasMainPage = true
     override val hasQuickSearch = false
     override val supportedTypes = setOf(TvType.NSFW)
@@ -68,6 +68,7 @@ class HQPornerProvider : MainAPI() {
                     source = name,
                     name = "HQPorner",
                     url = videoUrl,
+                    referer = mainUrl,           // REQUIRED
                     quality = guessQuality(videoUrl),
                     isM3u8 = videoUrl.contains(".m3u8"),
                     headers = mapOf("Referer" to mainUrl)
