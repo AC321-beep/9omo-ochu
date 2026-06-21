@@ -1,20 +1,27 @@
-android {
-    namespace = "com.hqporner"
+plugins {
+    id("com.android.library")
+    id("kotlin-android")
+    id("com.lagradost.cloudstream3.gradle")
 }
 
 cloudstream {
-    description = "Hqporner - NSFW Videos"
+    description = "HQPorner.com NSFW extension"
     authors = listOf("AC321-beep")
     status = 1
     tvTypes = listOf("NSFW")
     language = "en"
-    version = 2
-    iconUrl = "https://hqporner.com/favicon.ico"
+}
+
+android {
+    compileSdk = 33
+    namespace = "com.hqporner"
+    defaultConfig {
+        minSdk = 21
+        targetSdk = 33
+    }
 }
 
 dependencies {
-    // The root build already provides common dependencies (jsoup, NiceHttp, etc.)
-    // No extra dependencies are needed for Hqporner – the extractor works without them.
-    // If you need coroutines, uncomment the line below, but it's not required.
-    // implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("com.lagradost:cloudstream3:pre-release")
+    implementation("org.jsoup:jsoup:1.15.3")
 }
