@@ -33,7 +33,9 @@ class HQPornerProvider : MainAPI() {
 
         val document = app.get(url).document
 
+        // Select all video containers
         val videoContainers = document.select("div.img-container")
+            .ifEmpty { document.select("div[class*='img-container']") }
             .ifEmpty { document.select("div.video-item") }
             .ifEmpty { document.select("div.item") }
 
@@ -41,6 +43,7 @@ class HQPornerProvider : MainAPI() {
             extractVideoInfo(container)
         }
 
+        // Pagination detection
         val hasNext = document.select("div.pagi a[href*='/hdporn/']").isNotEmpty() ||
                 document.select("div.pagi a[href*='/category/']").isNotEmpty() ||
                 document.select("a.next").isNotEmpty() ||
@@ -61,6 +64,7 @@ class HQPornerProvider : MainAPI() {
         val document = app.get(url).document
 
         val videoContainers = document.select("div.img-container")
+            .ifEmpty { document.select("div[class*='img-container']") }
             .ifEmpty { document.select("div.video-item") }
             .ifEmpty { document.select("div.item") }
 
@@ -70,8 +74,9 @@ class HQPornerProvider : MainAPI() {
     }
 
     private fun extractVideoInfo(container: Element): SearchResponse? {
-        // Find the video link
+        // 1. Get the video link
         val link = container.selectFirst("a[href*='/hdporn/']")
+            ?: container.selectFirst("a[href^='/hdporn/']")
             ?: container.selectFirst("a[href^='/video/']")
             ?: container.selectFirst("a")
             ?: return null
@@ -79,49 +84,55 @@ class HQPornerProvider : MainAPI() {
         val href = link.attr("href")
         if (href.isBlank()) return null
 
-        // Poster from image
+        // 2. Get the poster image
         val img = container.selectFirst("img")
         var poster = img?.attr("src")
         if (poster.isNullOrBlank()) poster = img?.attr("data-src")
         if (poster.isNullOrBlank()) poster = img?.attr("data-original")
 
-        // ----- Title extraction (multiple fallbacks) -----
+        // 3. Get the title – try multiple sources in order of reliability
         var title = ""
 
-        // 1. Try to find the <h2> in the next sibling div
-        var nextSibling = container.nextElementSibling()
-        while (nextSibling != null) {
-            val h2 = nextSibling.selectFirst("h2")
-            if (h2 != null) {
-                title = h2.text().trim()
-                break
-            }
-            nextSibling = nextSibling.nextElementSibling()
+        // 3a. Primary: alt attribute of the image (most reliable)
+        if (img != null) {
+            title = img.attr("alt").trim()
         }
 
-        // 2. If still empty, use the image's alt attribute (common)
+        // 3b. If empty, try the <h2> in the next sibling
         if (title.isBlank()) {
-            title = img?.attr("alt")?.trim().orEmpty()
+            var next = container.nextElementSibling()
+            while (next != null) {
+                val h2 = next.selectFirst("h2")
+                if (h2 != null) {
+                    title = h2.text().trim()
+                    break
+                }
+                next = next.nextElementSibling()
+            }
         }
 
-        // 3. If still empty, use link's title attribute
+        // 3c. If still empty, try the link's title attribute
         if (title.isBlank()) {
             title = link.attr("title").trim()
         }
 
-        // 4. Last resort: link's own text (rarely set)
+        // 3d. Last resort: link's own text
         if (title.isBlank()) {
             title = link.text().trim()
         }
 
-        if (title.isBlank()) title = "No Title"
+        // 3e. Final fallback
+        if (title.isBlank()) {
+            title = "No Title"
+        }
 
+        // Return the search result
         return newMovieSearchResponse(title, fixUrl(href), TvType.NSFW) {
             this.posterUrl = poster
         }
     }
 
-    // ----- The rest is unchanged -----
+    // ----- The rest (load, loadLinks, guessQuality) is unchanged -----
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
 
