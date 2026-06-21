@@ -1,13 +1,13 @@
 package com.hqporner
 
-import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
-import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
+import com.lagradost.cloudstream3.CloudstreamPlugin
+import com.lagradost.cloudstream3.Plugin
+import com.lagradost.cloudstream3.registerMainAPI
 
 @CloudstreamPlugin
-class HqpornerPlugin : Plugin() {
+class HQPornerPlugin : Plugin() {
     override fun load(context: Context) {
-        registerMainAPI(Hqporner())
-        registerExtractorAPI(Extractor())
+        registerMainAPI(HQPornerProvider())
     }
 }
