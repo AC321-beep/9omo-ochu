@@ -21,6 +21,11 @@ class HQPornerProvider : MainAPI() {
         "category/pov" to "POV"
     )
 
+    // Set a mobile User-Agent to match the HTML you provided
+    private val headers = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36"
+    )
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = when {
             request.data.isBlank() -> {
@@ -31,15 +36,28 @@ class HQPornerProvider : MainAPI() {
             }
         }
 
-        val document = app.get(url).document
+        // Fetch with custom headers
+        val document = app.get(url, headers = headers).document
 
-        // Select all video containers
-        val videoContainers = document.select("div.img-container")
-            .ifEmpty { document.select("div[class*='img-container']") }
-            .ifEmpty { document.select("div.video-item") }
-            .ifEmpty { document.select("div.item") }
+        // Try multiple selectors for video containers
+        var containers = document.select("div.img-container")
+        if (containers.isEmpty()) containers = document.select("div.video-item")
+        if (containers.isEmpty()) containers = document.select("div.item")
+        if (containers.isEmpty()) containers = document.select("div[class*='img-container']")
+        if (containers.isEmpty()) containers = document.select("div[class*='video']")
+        if (containers.isEmpty()) containers = document.select("div[class*='item']")
+        // Last resort: find any <a> that points to /hdporn/ and use its parent div
+        if (containers.isEmpty()) {
+            val links = document.select("a[href*='/hdporn/']")
+            containers = links.mapNotNull { link ->
+                link.parents().find { it.tagName() == "div" && it.hasClass("img-container") }
+                    ?: link.parents().find { it.tagName() == "div" && it.hasClass("video-item") }
+                    ?: link.parents().find { it.tagName() == "div" && it.hasClass("item") }
+                    ?: link.parent()
+            }.filter { it.tagName() == "div" }.let { org.jsoup.select.Elements().apply { addAll(it) } }
+        }
 
-        val items = videoContainers.mapNotNull { container ->
+        val items = containers.mapNotNull { container ->
             extractVideoInfo(container)
         }
 
@@ -61,20 +79,28 @@ class HQPornerProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val url = "$mainUrl/search/${query.replace(" ", "-")}"
-        val document = app.get(url).document
+        val document = app.get(url, headers = headers).document
 
-        val videoContainers = document.select("div.img-container")
-            .ifEmpty { document.select("div[class*='img-container']") }
-            .ifEmpty { document.select("div.video-item") }
-            .ifEmpty { document.select("div.item") }
+        var containers = document.select("div.img-container")
+        if (containers.isEmpty()) containers = document.select("div.video-item")
+        if (containers.isEmpty()) containers = document.select("div.item")
+        if (containers.isEmpty()) {
+            val links = document.select("a[href*='/hdporn/']")
+            containers = links.mapNotNull { link ->
+                link.parents().find { it.tagName() == "div" && it.hasClass("img-container") }
+                    ?: link.parents().find { it.tagName() == "div" && it.hasClass("video-item") }
+                    ?: link.parents().find { it.tagName() == "div" && it.hasClass("item") }
+                    ?: link.parent()
+            }.filter { it.tagName() == "div" }.let { org.jsoup.select.Elements().apply { addAll(it) } }
+        }
 
-        return videoContainers.mapNotNull { container ->
+        return containers.mapNotNull { container ->
             extractVideoInfo(container)
         }
     }
 
     private fun extractVideoInfo(container: Element): SearchResponse? {
-        // 1. Get the video link
+        // Find the video link
         val link = container.selectFirst("a[href*='/hdporn/']")
             ?: container.selectFirst("a[href^='/hdporn/']")
             ?: container.selectFirst("a[href^='/video/']")
@@ -84,22 +110,17 @@ class HQPornerProvider : MainAPI() {
         val href = link.attr("href")
         if (href.isBlank()) return null
 
-        // 2. Get the poster image
+        // Get poster
         val img = container.selectFirst("img")
         var poster = img?.attr("src")
         if (poster.isNullOrBlank()) poster = img?.attr("data-src")
         if (poster.isNullOrBlank()) poster = img?.attr("data-original")
 
-        // 3. Get the title – try multiple sources in order of reliability
-        var title = ""
+        // Title extraction: image alt is most reliable
+        var title = img?.attr("alt")?.trim().orEmpty()
 
-        // 3a. Primary: alt attribute of the image (most reliable)
-        if (img != null) {
-            title = img.attr("alt").trim()
-        }
-
-        // 3b. If empty, try the <h2> in the next sibling
         if (title.isBlank()) {
+            // Try h2 in next sibling
             var next = container.nextElementSibling()
             while (next != null) {
                 val h2 = next.selectFirst("h2")
@@ -111,47 +132,28 @@ class HQPornerProvider : MainAPI() {
             }
         }
 
-        // 3c. If still empty, try the link's title attribute
-        if (title.isBlank()) {
-            title = link.attr("title").trim()
-        }
+        if (title.isBlank()) title = link.attr("title").trim()
+        if (title.isBlank()) title = link.text().trim()
+        if (title.isBlank()) title = "No Title"
 
-        // 3d. Last resort: link's own text
-        if (title.isBlank()) {
-            title = link.text().trim()
-        }
-
-        // 3e. Final fallback
-        if (title.isBlank()) {
-            title = "No Title"
-        }
-
-        // Return the search result
         return newMovieSearchResponse(title, fixUrl(href), TvType.NSFW) {
             this.posterUrl = poster
         }
     }
 
-    // ----- The rest (load, loadLinks, guessQuality) is unchanged -----
+    // ---------- load, loadLinks, guessQuality remain identical ----------
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url).document
-
+        val document = app.get(url, headers = headers).document
         val title = document.selectFirst("h1.title")?.text()
             ?: document.selectFirst("h1[itemprop='name']")?.text()
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")
             ?: "Unknown"
-
         val poster = document.selectFirst("video")?.attr("poster")
             ?: document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: ""
-
         val description = document.select("div.description p").text()
             .ifEmpty { document.select("meta[name='description']")?.attr("content").orEmpty() }
-
-        val episode = newEpisode("Full Video") {
-            this.posterUrl = poster
-        }
-
+        val episode = newEpisode("Full Video") { this.posterUrl = poster }
         return newTvSeriesLoadResponse(title, url, TvType.NSFW, listOf(episode)) {
             this.posterUrl = poster
             this.plot = description
@@ -164,11 +166,9 @@ class HQPornerProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data).document
-
+        val document = app.get(data, headers = headers).document
         val videoSource = document.selectFirst("video source")
         val videoUrl = videoSource?.attr("src")
-
         if (!videoUrl.isNullOrEmpty()) {
             callback(
                 newExtractorLink(
@@ -183,12 +183,10 @@ class HQPornerProvider : MainAPI() {
             )
             return true
         }
-
         val iframe = document.selectFirst("iframe[src*='/embed/']")
         if (iframe != null) {
             return loadLinks(iframe.attr("src"), isCasting, subtitleCallback, callback)
         }
-
         val dataVideo = document.selectFirst("video[data-src]")?.attr("data-src")
         if (!dataVideo.isNullOrEmpty()) {
             callback(
@@ -204,7 +202,6 @@ class HQPornerProvider : MainAPI() {
             )
             return true
         }
-
         return false
     }
 
