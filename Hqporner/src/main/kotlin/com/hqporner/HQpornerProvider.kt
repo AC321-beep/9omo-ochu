@@ -52,29 +52,24 @@ class HQPornerProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val document = app.get(data).document
-
-        // Try direct <video> source
         val videoSource = document.selectFirst("video source")
         val videoUrl = videoSource?.attr("src")
 
         if (!videoUrl.isNullOrEmpty()) {
             callback(
-                newExtractorLink(
+                ExtractorLink(
                     source = name,
                     name = name,
                     url = videoUrl,
-                    type = INFER_TYPE
-                ) {
-                    this.referer = mainUrl
-                    this.quality = guessQuality(videoUrl)
-                    this.isM3u8 = videoUrl.contains(".m3u8")
-                    this.headers = mapOf("Referer" to mainUrl)
-                }
+                    referer = mainUrl,
+                    quality = guessQuality(videoUrl),
+                    isM3u8 = videoUrl.contains(".m3u8"),
+                    headers = mapOf("Referer" to mainUrl)
+                )
             )
             return true
         }
 
-        // Fallback: iframe embed
         val iframe = document.selectFirst("iframe[src*=/embed/]")
         if (iframe != null) {
             return loadLinks(iframe.attr("src"), isCasting, subtitleCallback, callback)
