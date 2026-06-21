@@ -13,14 +13,40 @@ class HQPornerProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.NSFW)
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page == 1) "$mainUrl/new-videos" else "$mainUrl/new-videos?page=$page"
+        // Try multiple possible main page URLs
+        val url = when (page) {
+            1 -> "$mainUrl/new-videos"
+            else -> "$mainUrl/new-videos?page=$page"
+        }
+
         val document = app.get(url).document
-        val items = document.select("div.video-item").mapNotNull { it.toSearchResult() }
-        val hasNext = document.select("a.next").isNotEmpty()
+
+        // Multiple selectors to catch different layouts
+        val videoItems = document.select("div.video-item")
+            .ifEmpty { document.select("div.item") }
+            .ifEmpty { document.select("div.video-block") }
+            .ifEmpty { document.select("div[class*='video']") }
+            .ifEmpty { document.select("div[class*='item']") }
+
+        val items = videoItems.mapNotNull { it.toSearchResult() }
+
+        // Fallback: if no items, try the main page without /new-videos
+        val finalItems = if (items.isEmpty() && page == 1) {
+            val altDoc = app.get(mainUrl).document
+            altDoc.select("div.video-item")
+                .ifEmpty { altDoc.select("div.item") }
+                .ifEmpty { altDoc.select("div.video-block") }
+                .mapNotNull { it.toSearchResult() }
+        } else items
+
+        val hasNext = document.select("a.next").isNotEmpty() ||
+                document.select("a[rel='next']").isNotEmpty() ||
+                document.select("a.pagination-next").isNotEmpty()
+
         return newHomePageResponse(
             list = HomePageList(
                 name = request.name,
-                list = items,
+                list = finalItems,
                 isHorizontalImages = true
             ),
             hasNext = hasNext
@@ -30,15 +56,37 @@ class HQPornerProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val url = "$mainUrl/search/${query.replace(" ", "-")}"
         val document = app.get(url).document
-        return document.select("div.video-item").mapNotNull { it.toSearchResult() }
+
+        val videoItems = document.select("div.video-item")
+            .ifEmpty { document.select("div.item") }
+            .ifEmpty { document.select("div.video-block") }
+            .ifEmpty { document.select("div[class*='video']") }
+
+        return videoItems.mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
-        val title = document.selectFirst("h1.title")?.text() ?: "Unknown"
-        val poster = document.selectFirst("video")?.attr("poster") ?: ""
+
+        // Title: multiple possibilities
+        val title = document.selectFirst("h1.title")?.text()
+            ?: document.selectFirst("h1[itemprop='name']")?.text()
+            ?: document.selectFirst("meta[property='og:title']")?.attr("content")
+            ?: "Unknown"
+
+        // Poster: from video tag or meta
+        val poster = document.selectFirst("video")?.attr("poster")
+            ?: document.selectFirst("meta[property='og:image']")?.attr("content")
+            ?: ""
+
+        // Description
         val description = document.select("div.description p").text()
-        val episode = newEpisode("Full Video") { this.posterUrl = poster }
+            .ifEmpty { document.select("meta[name='description']")?.attr("content") }
+
+        val episode = newEpisode("Full Video") {
+            this.posterUrl = poster
+        }
+
         return newTvSeriesLoadResponse(title, url, TvType.NSFW, listOf(episode)) {
             this.posterUrl = poster
             this.plot = description
@@ -53,6 +101,7 @@ class HQPornerProvider : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
 
+        // Try direct video source
         val videoSource = document.selectFirst("video source")
         val videoUrl = videoSource?.attr("src")
 
@@ -71,9 +120,27 @@ class HQPornerProvider : MainAPI() {
             return true
         }
 
-        val iframe = document.selectFirst("iframe[src*=/embed/]")
+        // Try iframe embed (some videos are embedded)
+        val iframe = document.selectFirst("iframe[src*='/embed/']")
         if (iframe != null) {
             return loadLinks(iframe.attr("src"), isCasting, subtitleCallback, callback)
+        }
+
+        // Try to find video URL in JavaScript (some sites use data-attributes)
+        val dataVideo = document.selectFirst("video[data-src]")?.attr("data-src")
+        if (!dataVideo.isNullOrEmpty()) {
+            callback(
+                newExtractorLink(
+                    source = name,
+                    name = name,
+                    url = dataVideo,
+                    type = INFER_TYPE
+                ) {
+                    this.referer = mainUrl
+                    this.quality = guessQuality(dataVideo)
+                }
+            )
+            return true
         }
 
         return false
@@ -90,12 +157,31 @@ class HQPornerProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val link = this.selectFirst("a") ?: return null
+        // Find the link
+        val link = this.selectFirst("a[href*='/video/']")
+            ?: this.selectFirst("a")
+            ?: return null
+
         val href = link.attr("href")
-        val title = link.attr("title").ifEmpty { link.text() }
+        if (href.isBlank()) return null
+
+        // Title: from link's title attribute, or text, or from a separate title element
+        val title = link.attr("title")
+            .ifEmpty { link.text() }
+            .ifEmpty { this.select("h4 a")?.text() }
+            .ifEmpty { this.select("div.title a")?.text() }
+            .ifEmpty { this.select("p.title a")?.text() }
+            .trim()
+            .ifEmpty { "No Title" }
+
+        // Thumbnail: try src, data-src, data-original
         val img = this.selectFirst("img")
-        val poster = img?.attr("src") ?: img?.attr("data-src")
-        return newMovieSearchResponse(title, href) {
+        var poster = img?.attr("src")
+        if (poster.isNullOrBlank()) poster = img?.attr("data-src")
+        if (poster.isNullOrBlank()) poster = img?.attr("data-original")
+        if (poster.isNullOrBlank()) poster = this.selectFirst("div.thumb img")?.attr("src")
+
+        return newMovieSearchResponse(title, fixUrl(href), TvType.NSFW) {
             this.posterUrl = poster
         }
     }
