@@ -12,32 +12,60 @@ class HQPornerProvider : MainAPI() {
     override val hasQuickSearch = false
     override val supportedTypes = setOf(TvType.NSFW)
 
-    // Main page now uses the root URL and is named "Recent"
+    // Define all home screen categories.
+    // The first entry ("") is the main "Recent" page.
+    override val mainPage = mainPageOf(
+        "" to "Recent",
+        "category/creampie" to "Creampie",
+        "category/milf" to "Milf",
+        "category/teen-porn" to "Teen",
+        "category/ebony" to "Ebony",
+        "category/pov" to "POV"
+    )
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Build the URL: page 1 -> mainUrl, else mainUrl?page=page
-        val url = if (page == 1) mainUrl else "$mainUrl?page=$page"
+        // Build the URL:
+        // - For "Recent" (request.data == ""): use the base URL with pagination.
+        // - For categories: use "mainUrl/category/xxx" with pagination.
+        val url = if (request.data.isBlank()) {
+            if (page == 1) mainUrl else "$mainUrl?page=$page"
+        } else {
+            if (page == 1) "$mainUrl/${request.data}" else "$mainUrl/${request.data}?page=$page"
+        }
+
         val document = app.get(url).document
 
-        // Multiple selectors to catch video items
+        // Try multiple selectors to catch video items.
         val videoItems = document.select("div.video-item")
             .ifEmpty { document.select("div.item") }
             .ifEmpty { document.select("div.video-block") }
             .ifEmpty { document.select("div[class*='video']") }
             .ifEmpty { document.select("div[class*='item']") }
+            // Fallback: look for "box feature" inside the main content area.
+            .ifEmpty { document.select("section.box.features div.row section.box.feature") }
 
         val items = videoItems.mapNotNull { it.toSearchResult() }
 
-        // Detect if there is a next page
+        // Fallback: if still empty and this is the first page, try the main URL without any path.
+        val finalItems = if (items.isEmpty() && page == 1) {
+            val altDoc = app.get(mainUrl).document
+            altDoc.select("div.video-item")
+                .ifEmpty { altDoc.select("div.item") }
+                .ifEmpty { altDoc.select("div.video-block") }
+                .ifEmpty { altDoc.select("section.box.features div.row section.box.feature") }
+                .mapNotNull { it.toSearchResult() }
+        } else items
+
+        // Detect if there is a next page.
         val hasNext = document.select("a.next").isNotEmpty() ||
                 document.select("a[rel='next']").isNotEmpty() ||
                 document.select("a.pagination-next").isNotEmpty() ||
-                // Some sites use a "Load More" or page parameter; we assume if we got items, there might be more
-                (items.isNotEmpty() && page < 10)  // fallback
+                (finalItems.isNotEmpty() && page < 10) // fallback
 
         return newHomePageResponse(
             list = HomePageList(
-                name = "Recent",   // Explicitly name the list "Recent"
-                list = items,
+                name = request.name,
+                list = finalItems,
                 isHorizontalImages = true
             ),
             hasNext = hasNext
@@ -52,6 +80,7 @@ class HQPornerProvider : MainAPI() {
             .ifEmpty { document.select("div.item") }
             .ifEmpty { document.select("div.video-block") }
             .ifEmpty { document.select("div[class*='video']") }
+            .ifEmpty { document.select("section.box.features div.row section.box.feature") }
 
         return videoItems.mapNotNull { it.toSearchResult() }
     }
@@ -142,13 +171,16 @@ class HQPornerProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val link = this.selectFirst("a[href*='/video/']")
+        // Try to find the video link.
+        val link = this.selectFirst("a[href*='/hdporn/']")
+            ?: this.selectFirst("a[href*='/video/']")
             ?: this.selectFirst("a")
             ?: return null
 
         val href = link.attr("href")
         if (href.isBlank()) return null
 
+        // Build title with safe null handling.
         val title = link.attr("title")
             .orEmpty()
             .ifEmpty { link.text() }
@@ -158,11 +190,16 @@ class HQPornerProvider : MainAPI() {
             .trim()
             .ifEmpty { "No Title" }
 
+        // Extract thumbnail.
         val img = this.selectFirst("img")
         var poster = img?.attr("src")
         if (poster.isNullOrBlank()) poster = img?.attr("data-src")
         if (poster.isNullOrBlank()) poster = img?.attr("data-original")
         if (poster.isNullOrBlank()) poster = this.selectFirst("div.thumb img")?.attr("src")
+        // For the "box feature" layout, the image might be inside a div with class "image".
+        if (poster.isNullOrBlank()) {
+            poster = this.selectFirst("div.image img")?.attr("src")
+        }
 
         return newMovieSearchResponse(title, fixUrl(href), TvType.NSFW) {
             this.posterUrl = poster
