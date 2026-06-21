@@ -1,9 +1,7 @@
 package com.hqporner
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.SubtitleFile
-import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 
 class HQPornerProvider : MainAPI() {
@@ -19,7 +17,14 @@ class HQPornerProvider : MainAPI() {
         val document = app.get(url).document
         val items = document.select("div.video-item").mapNotNull { it.toSearchResult() }
         val hasNext = document.select("a.next").isNotEmpty()
-        return newHomePageResponse(name, items, hasNext)
+        return newHomePageResponse(
+            list = HomePageList(
+                name = request.name,
+                list = items,
+                isHorizontalImages = true
+            ),
+            hasNext = hasNext
+        )
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -48,7 +53,7 @@ class HQPornerProvider : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
 
-        // Try direct video source
+        // Try direct <video> source
         val videoSource = document.selectFirst("video source")
         val videoUrl = videoSource?.attr("src")
 
@@ -56,18 +61,20 @@ class HQPornerProvider : MainAPI() {
             callback(
                 newExtractorLink(
                     source = name,
-                    name = "HQPorner",
+                    name = name,
                     url = videoUrl,
-                    referer = mainUrl,
-                    quality = guessQuality(videoUrl),
-                    isM3u8 = videoUrl.contains(".m3u8"),
-                    headers = mapOf("Referer" to mainUrl)
-                )
+                    type = INFER_TYPE
+                ) {
+                    this.referer = mainUrl
+                    this.quality = guessQuality(videoUrl)
+                    this.isM3u8 = videoUrl.contains(".m3u8")
+                    this.headers = mapOf("Referer" to mainUrl)
+                }
             )
             return true
         }
 
-        // Fallback: embedded iframe
+        // Fallback: iframe embed
         val iframe = document.selectFirst("iframe[src*=/embed/]")
         if (iframe != null) {
             return loadLinks(iframe.attr("src"), isCasting, subtitleCallback, callback)
