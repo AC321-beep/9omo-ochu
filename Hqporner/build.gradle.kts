@@ -5,4 +5,5 @@ cloudstream {
     tvTypes = listOf("NSFW")
     language = "en"
     version = 1
+    iconUrl = "https://hqporner.com/favicon.ico"   // optional
 }
