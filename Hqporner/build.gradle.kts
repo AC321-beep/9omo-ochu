@@ -6,5 +6,3 @@ cloudstream {
     language = "en"
     version = 1
 }
-
-
