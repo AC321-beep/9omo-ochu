@@ -22,21 +22,17 @@ class HQPornerProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Build correct URL based on category and page number
         val url = when {
             request.data.isBlank() -> {
-                // Recent: page 1 => mainUrl, else /hdporn/2, /hdporn/3, ...
                 if (page == 1) mainUrl else "$mainUrl/hdporn/$page"
             }
             else -> {
-                // Categories: page 1 => /category/xxx, else /category/xxx/2, ...
                 if (page == 1) "$mainUrl/${request.data}" else "$mainUrl/${request.data}/$page"
             }
         }
 
         val document = app.get(url).document
 
-        // Select all video containers (the first div of each video block)
         val videoContainers = document.select("div.img-container")
             .ifEmpty { document.select("div.video-item") }
             .ifEmpty { document.select("div.item") }
@@ -45,11 +41,10 @@ class HQPornerProvider : MainAPI() {
             extractVideoInfo(container)
         }
 
-        // Detect next page: look for a link like "/hdporn/2" or "/category/creampie/2"
         val hasNext = document.select("div.pagi a[href*='/hdporn/']").isNotEmpty() ||
                 document.select("div.pagi a[href*='/category/']").isNotEmpty() ||
                 document.select("a.next").isNotEmpty() ||
-                (items.isNotEmpty() && page < 10) // fallback
+                (items.isNotEmpty() && page < 10)
 
         return newHomePageResponse(
             list = HomePageList(
@@ -74,9 +69,8 @@ class HQPornerProvider : MainAPI() {
         }
     }
 
-    // Extracts video info from a <div class="img-container"> and its following siblings
     private fun extractVideoInfo(container: Element): SearchResponse? {
-        // Find the link inside the container
+        // Find the video link
         val link = container.selectFirst("a[href*='/hdporn/']")
             ?: container.selectFirst("a[href^='/video/']")
             ?: container.selectFirst("a")
@@ -85,14 +79,16 @@ class HQPornerProvider : MainAPI() {
         val href = link.attr("href")
         if (href.isBlank()) return null
 
-        // Get thumbnail from img inside the container
+        // Poster from image
         val img = container.selectFirst("img")
         var poster = img?.attr("src")
         if (poster.isNullOrBlank()) poster = img?.attr("data-src")
         if (poster.isNullOrBlank()) poster = img?.attr("data-original")
 
-        // Title is in the NEXT sibling that contains an <h2>
+        // ----- Title extraction (multiple fallbacks) -----
         var title = ""
+
+        // 1. Try to find the <h2> in the next sibling div
         var nextSibling = container.nextElementSibling()
         while (nextSibling != null) {
             val h2 = nextSibling.selectFirst("h2")
@@ -103,9 +99,19 @@ class HQPornerProvider : MainAPI() {
             nextSibling = nextSibling.nextElementSibling()
         }
 
-        // Fallback: use link's title attribute or text
+        // 2. If still empty, use the image's alt attribute (common)
         if (title.isBlank()) {
-            title = link.attr("title").ifEmpty { link.text() }.trim()
+            title = img?.attr("alt")?.trim().orEmpty()
+        }
+
+        // 3. If still empty, use link's title attribute
+        if (title.isBlank()) {
+            title = link.attr("title").trim()
+        }
+
+        // 4. Last resort: link's own text (rarely set)
+        if (title.isBlank()) {
+            title = link.text().trim()
         }
 
         if (title.isBlank()) title = "No Title"
@@ -115,7 +121,7 @@ class HQPornerProvider : MainAPI() {
         }
     }
 
-    // ----- The rest (load, loadLinks, guessQuality) remains the same -----
+    // ----- The rest is unchanged -----
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
 
