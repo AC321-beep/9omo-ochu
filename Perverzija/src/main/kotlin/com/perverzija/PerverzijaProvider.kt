@@ -19,7 +19,6 @@ import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-// import kotlinx.coroutines.delay   // already removed
 import org.jsoup.nodes.Element
 
 class Perverzija : MainAPI() {
@@ -34,11 +33,11 @@ class Perverzija : MainAPI() {
 
     override val mainPage = mainPageOf(
         "$mainUrl/page/%d/" to "Home",
-        "$mainUrl/category/creampie/page/%d/" to "Creampie",
-        "$mainUrl/category/family-taboo/page/%d/" to "Family Taboo",
-        "$mainUrl/category/milf/page/%d/" to "Milf",
-        "$mainUrl/category/wife/page/%d/" to "Wife",
-        "$mainUrl/category/teen/page/%d/" to "Teen",
+        "$mainUrl/tag/creampie/page/%d/" to "Creampie",
+        "$mainUrl/tag/family-taboo/page/%d/" to "Family Taboo",
+        "$mainUrl/tag/milf/page/%d/" to "Milf",
+        "$mainUrl/tag/wife/page/%d/" to "Wife",
+        "$mainUrl/tag/teen/page/%d/" to "Teen",
         "$mainUrl/featured-scenes/page/%d/?orderby=date" to "Featured",
         "$mainUrl/studio/onlyfans/page/%d/" to "Onlyfans",
         "$mainUrl/studio/brazzers/page/%d/" to "Brazzers",
