@@ -19,7 +19,7 @@ import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-// import kotlinx.coroutines.delay   // remove this part
+// import kotlinx.coroutines.delay   // already removed
 import org.jsoup.nodes.Element
 
 class Perverzija : MainAPI() {
@@ -34,16 +34,18 @@ class Perverzija : MainAPI() {
 
     override val mainPage = mainPageOf(
         "$mainUrl/page/%d/" to "Home",
+        "$mainUrl/category/creampie/page/%d/" to "Creampie",
+        "$mainUrl/category/family-taboo/page/%d/" to "Family Taboo",
+        "$mainUrl/category/milf/page/%d/" to "Milf",
+        "$mainUrl/category/wife/page/%d/" to "Wife",
+        "$mainUrl/category/teen/page/%d/" to "Teen",
         "$mainUrl/featured-scenes/page/%d/?orderby=date" to "Featured",
         "$mainUrl/studio/onlyfans/page/%d/" to "Onlyfans",
-        "$mainUrl/studio/vxn/page/%d/" to "Vxn",
         "$mainUrl/studio/brazzers/page/%d/" to "Brazzers",
-        "$mainUrl/studio/private/page/%d/" to "Private",
         "$mainUrl/studio/nubiles/page/%d/" to "Nubiles",
         "$mainUrl/studio/realitykings/page/%d/" to "Reality Kings",
         "$mainUrl/studio/bangbros/page/%d/" to "Bangbros",
-        "$mainUrl/studio/naughtyamerica/page/%d/" to "Naughty America",
-        "$mainUrl/studio/vxn/blacked/page/%d/" to "Blacked",
+        "$mainUrl/studio/naughtyamerica/page/%d/" to "Naughty America"
     )
 
     override suspend fun getMainPage(
