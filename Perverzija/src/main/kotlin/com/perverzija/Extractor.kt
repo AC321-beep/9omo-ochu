@@ -15,7 +15,6 @@ open class Xtremestream : ExtractorApi() {
     override val requiresReferer = true
     private val client = OkHttpClient()
 
-    // Now returns true if any links were extracted
     override suspend fun getUrl(
         url: String,
         referer: String?,
@@ -32,6 +31,7 @@ open class Xtremestream : ExtractorApi() {
         val response = client.newCall(request).execute()
         val html = response.body?.string() ?: return false
 
+        // ----- Method 1: original pattern (var video_id) -----
         val playerScript =
             Jsoup.parse(html).selectXpath("//script[contains(text(),'var video_id')]")
                 .html()
@@ -42,7 +42,6 @@ open class Xtremestream : ExtractorApi() {
 
             if (videoId.isNotBlank() && m3u8LoaderUrl.isNotBlank()) {
                 val resolutions = listOf(1080, 720, 480)
-                var found = false
                 resolutions.forEach { resolution ->
                     callback.invoke(
                         newExtractorLink(
@@ -60,11 +59,92 @@ open class Xtremestream : ExtractorApi() {
                             )
                         }
                     )
-                    found = true
                 }
-                return found
+                return true
             }
         }
+
+        // ----- Method 2: search for direct video URLs in the HTML -----
+        val doc = Jsoup.parse(html)
+        val videoUrls = mutableListOf<String>()
+
+        // 2a: <video> or <source> tags
+        val videoSources = doc.select("video source")
+        videoSources.forEach { source ->
+            val src = source.attr("src")
+            if (src.isNotBlank()) videoUrls.add(src)
+        }
+        val videoTag = doc.selectFirst("video")
+        videoTag?.let {
+            val src = it.attr("src")
+            if (src.isNotBlank()) videoUrls.add(src)
+        }
+
+        // 2b: regex for .mp4/.m3u8 URLs (including those in JavaScript)
+        val regex = Regex("""(https?://[^\s"']+\.(mp4|m3u8))""")
+        regex.findAll(html).forEach { match ->
+            val videoUrl = match.groupValues[1]
+            if (videoUrl.isNotBlank() && !videoUrls.contains(videoUrl)) {
+                videoUrls.add(videoUrl)
+            }
+        }
+
+        if (videoUrls.isNotEmpty()) {
+            videoUrls.forEach { videoUrl ->
+                val isM3u8 = videoUrl.contains(".m3u8")
+                callback.invoke(
+                    newExtractorLink(
+                        name,
+                        name,
+                        videoUrl,
+                        type = if (isM3u8) ExtractorLinkType.M3U8 else INFER_TYPE
+                    ) {
+                        this.referer = url
+                        this.quality = guessQuality(videoUrl)
+                        this.headers = mapOf(
+                            "Referer" to url,
+                            "User-Agent" to USER_AGENT
+                        )
+                    }
+                )
+            }
+            return true
+        }
+
+        // ----- Method 3: look for JSON config inside scripts (common in new players) -----
+        val jsonRegex = Regex(""""file"\s*:\s*"([^"]+\.(mp4|m3u8))"""")
+        jsonRegex.findAll(html).forEach { match ->
+            val videoUrl = match.groupValues[1]
+            if (videoUrl.isNotBlank()) {
+                callback.invoke(
+                    newExtractorLink(
+                        name,
+                        name,
+                        videoUrl,
+                        type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+                    ) {
+                        this.referer = url
+                        this.quality = guessQuality(videoUrl)
+                        this.headers = mapOf(
+                            "Referer" to url,
+                            "User-Agent" to USER_AGENT
+                        )
+                    }
+                )
+                return true
+            }
+        }
+
         return false
+    }
+
+    private fun guessQuality(url: String): Int {
+        return when {
+            url.contains("1080") -> 1080
+            url.contains("720") -> 720
+            url.contains("480") -> 480
+            url.contains("360") -> 360
+            else -> 0
+        }
     }
 }
