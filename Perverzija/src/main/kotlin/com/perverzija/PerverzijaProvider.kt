@@ -1,4 +1,4 @@
-package com.CXXX
+package com.perverzija
 
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
@@ -70,7 +70,6 @@ class Perverzija : MainAPI() {
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = posterUrl
         }
-
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
@@ -81,12 +80,11 @@ class Perverzija : MainAPI() {
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = posterUrl
         }
-
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList? {
         val url = if (query.contains(" ")) {
-        "$mainUrl/page/$page/?s=${query.replace(" ", "+")}&orderby=date"
+            "$mainUrl/page/$page/?s=${query.replace(" ", "+")}&orderby=date"
         } else {
             "$mainUrl/tag/$query/page/$page/"
         }
@@ -94,7 +92,7 @@ class Perverzija : MainAPI() {
         val results = app.get(url, interceptor = cfInterceptor).document
             .select("div.row div div.post").mapNotNull {
                 it.toSearchResult()
-        }.distinctBy { it.url }
+            }.distinctBy { it.url }
 
         val hasNext = if (results.isEmpty()) false else true
         return newSearchResponseList(results, hasNext)
@@ -138,7 +136,7 @@ class Perverzija : MainAPI() {
 
         val iframeUrl = document.select("div#player-embed iframe").attr("src")
 
-        Xtremestream().getUrl(iframeUrl, data, subtitleCallback, callback)
+        Extractor().getUrl(iframeUrl, data, subtitleCallback, callback)   // ← class name changed
 
         return true
     }
