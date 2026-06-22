@@ -15,8 +15,13 @@ open class Xtremestream : ExtractorApi() {
     override val requiresReferer = true
     private val client = OkHttpClient()
 
-    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit){
-
+    // Now returns true if any links were extracted
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
         val request = Request.Builder()
             .url(url)
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
@@ -25,7 +30,7 @@ open class Xtremestream : ExtractorApi() {
             .build()
 
         val response = client.newCall(request).execute()
-        val html = response.body?.string() ?: return
+        val html = response.body?.string() ?: return false
 
         val playerScript =
             Jsoup.parse(html).selectXpath("//script[contains(text(),'var video_id')]")
@@ -36,9 +41,8 @@ open class Xtremestream : ExtractorApi() {
                 playerScript.substringAfter("var m3u8_loader_url = `").substringBefore("`;")
 
             if (videoId.isNotBlank() && m3u8LoaderUrl.isNotBlank()) {
-
                 val resolutions = listOf(1080, 720, 480)
-
+                var found = false
                 resolutions.forEach { resolution ->
                     callback.invoke(
                         newExtractorLink(
@@ -56,8 +60,11 @@ open class Xtremestream : ExtractorApi() {
                             )
                         }
                     )
+                    found = true
                 }
+                return found
             }
         }
+        return false
     }
 }
