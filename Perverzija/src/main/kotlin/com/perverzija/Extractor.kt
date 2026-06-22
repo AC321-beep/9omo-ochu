@@ -20,7 +20,7 @@ open class Xtremestream : ExtractorApi() {
         referer: String?,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ): Boolean {
+    ) {
         val request = Request.Builder()
             .url(url)
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
@@ -29,7 +29,7 @@ open class Xtremestream : ExtractorApi() {
             .build()
 
         val response = client.newCall(request).execute()
-        val html = response.body?.string() ?: return false
+        val html = response.body?.string() ?: return
 
         // ----- Method 1: original pattern (var video_id) -----
         val playerScript =
@@ -60,7 +60,7 @@ open class Xtremestream : ExtractorApi() {
                         }
                     )
                 }
-                return true
+                return
             }
         }
 
@@ -108,7 +108,7 @@ open class Xtremestream : ExtractorApi() {
                     }
                 )
             }
-            return true
+            return
         }
 
         // ----- Method 3: look for JSON config inside scripts (common in new players) -----
@@ -131,11 +131,9 @@ open class Xtremestream : ExtractorApi() {
                         )
                     }
                 )
-                return true
+                return
             }
         }
-
-        return false
     }
 
     private fun guessQuality(url: String): Int {
