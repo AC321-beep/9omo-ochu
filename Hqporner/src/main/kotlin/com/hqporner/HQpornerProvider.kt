@@ -68,7 +68,6 @@ class HQPornerProvider : MainAPI() {
         if (poster.isNullOrBlank()) {
             poster = this.selectFirst("img")?.attr("src")
         }
-        // Fix relative URLs
         if (!poster.isNullOrBlank() && poster.startsWith("//")) {
             poster = "https:$poster"
         }
@@ -126,7 +125,7 @@ class HQPornerProvider : MainAPI() {
         val document = app.get(data, headers = headers).document
         val docHtml = document.toString()
 
-        // 1. Try to find the direct iframe source (most reliable)
+        // 1. Try to find the iframe src directly
         val iframe = document.selectFirst("iframe[src*='mydaddy.cc']")
             ?: document.selectFirst("iframe[src*='/video/']")
             ?: document.selectFirst("iframe[src*='embed']")
@@ -134,18 +133,16 @@ class HQPornerProvider : MainAPI() {
             var iframeSrc = iframe.attr("src")
             if (iframeSrc.startsWith("//")) iframeSrc = "https:$iframeSrc"
             if (iframeSrc.isNotBlank()) {
-                // Pass the iframe URL to loadExtractor
-                loadExtractor(iframeSrc, subtitleCallback, callback)
-                return true
+                // Attempt to extract video from the iframe page
+                return loadExtractor(iframeSrc, subtitleCallback, callback)
             }
         }
 
-        // 2. Fallback: try the altplayer regex (from the JavaScript)
+        // 2. Fallback: try the altplayer regex (from JavaScript)
         val rawUrl = Regex("""url: '/blocks/altplayer\.php\?i=//(.*?)',""").find(docHtml)?.groupValues?.get(1)
         if (!rawUrl.isNullOrBlank()) {
             val href = "https://$rawUrl"
-            loadExtractor(href, subtitleCallback, callback)
-            return true
+            return loadExtractor(href, subtitleCallback, callback)
         }
 
         // 3. Try to find any .mp4 URL in the page (unlikely but possible)
