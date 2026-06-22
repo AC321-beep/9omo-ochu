@@ -15,7 +15,6 @@ class HQPornerProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.NSFW)
     override val vpnStatus = VPNStatus.MightBeNeeded
 
-    // Use mobile user-agent to get consistent HTML
     private val headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 10; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36"
     )
@@ -40,14 +39,10 @@ class HQPornerProvider : MainAPI() {
             }
         }
 
-        // Use headers to mimic mobile browser
         val document = app.get(url, headers = headers).document
 
-        // Updated selectors based on actual HTML structure
         val items = document.select("section.box.features div.6u section.box.feature")
-            .mapNotNull { section ->
-                section.toSearchResult()
-            }
+            .mapNotNull { it.toSearchResult() }
 
         val hasNext = document.select("div.pagi a[href*='/hdporn/']").isNotEmpty() ||
                 document.select("div.pagi a[href*='/category/']").isNotEmpty() ||
@@ -65,7 +60,6 @@ class HQPornerProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        // Find the link inside the section
         val link = this.selectFirst("a[href*='/hdporn/']")
             ?: this.selectFirst("a[href^='/hdporn/']")
             ?: this.selectFirst("a")
@@ -74,27 +68,23 @@ class HQPornerProvider : MainAPI() {
         val href = link.attr("href")
         if (href.isBlank()) return null
 
-        // Get title from the link's text or from a following header
         var title = link.text().trim()
         if (title.isBlank()) {
-            // Try to find title in a nearby header
             val header = this.selectFirst("header h3 a, h3 a, h2 a")
             title = header?.text()?.trim().orEmpty()
         }
         if (title.isBlank()) title = "No Title"
 
-        // Capitalise each word
         val formattedTitle = title.split(" ")
             .joinToString(" ") { it.replaceFirstChar { char -> char.uppercase() } }
 
-        // Get poster from the image inside the link or nearby
-        var poster = this.select("img").attr("src")
-        if (poster.isBlank()) poster = this.select("img").attr("data-src")
-        if (poster.isBlank()) {
-            // Try to find image inside the link
-            poster = link.select("img").attr("src")
+        // Poster extraction, nullable
+        val poster: String? = run {
+            var img = this.select("img").attr("src")
+            if (img.isNullOrBlank()) img = this.select("img").attr("data-src")
+            if (img.isNullOrBlank()) img = link.select("img").attr("src")
+            fixUrlNull(img)
         }
-        poster = fixUrlNull(poster)
 
         return newMovieSearchResponse(
             formattedTitle,
