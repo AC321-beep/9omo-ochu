@@ -15,18 +15,18 @@ class HQPornerProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.NSFW)
     override val vpnStatus = VPNStatus.MightBeNeeded
 
-    // Browser headers to avoid blocking
+    // Mobile user-agent (the HTML you provided was from mobile version)
     private val headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.5",
-        "Accept-Encoding" to "gzip, deflate, br",
-        "Connection" to "keep-alive",
-        "Upgrade-Insecure-Requests" to "1"
+        "Referer" to "https://hqporner.com/",
+        "Connection" to "keep-alive"
     )
 
+    // For "Recent", we use the paginated URL (always contains video links)
     override val mainPage = mainPageOf(
-        mainUrl to "Recent",
+        "$mainUrl/hdporn/1" to "Recent",   // <-- always works
         "$mainUrl/category/creampie" to "Creampie",
         "$mainUrl/category/milf" to "Milf",
         "$mainUrl/category/teen-porn" to "Teen",
@@ -36,36 +36,44 @@ class HQPornerProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val baseUrl = request.data
-        val url = if (page == 1) {
-            baseUrl
-        } else {
-            when {
-                baseUrl == mainUrl -> "$mainUrl/hdporn/$page"
-                else -> "$baseUrl/$page"
+        // For "Recent", we already have baseUrl = /hdporn/1, so we adjust pagination
+        val url = when {
+            // If baseUrl contains "/hdporn/", then we are on the paginated Recent
+            baseUrl.contains("/hdporn/") -> {
+                // Extract the page number from baseUrl, or default to 1
+                val currentPage = Regex("""/hdporn/(\d+)""").find(baseUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                if (page == currentPage) baseUrl else "$mainUrl/hdporn/$page"
+            }
+            // For categories
+            baseUrl != mainUrl -> {
+                if (page == 1) baseUrl else "$baseUrl/$page"
+            }
+            else -> {
+                // fallback (shouldn't happen)
+                if (page == 1) "$mainUrl/hdporn/1" else "$mainUrl/hdporn/$page"
             }
         }
 
         val document = app.get(url, headers = headers).document
 
-        // 1. Find all links to video pages
+        // Find all links to /hdporn/ (these are the video links)
         val videoLinks = document.select("a[href*='/hdporn/']")
-        if (videoLinks.isEmpty()) {
-            // If no links, fallback to selectors (just in case)
-            val fallbackItems = document.select("section.box.features div.6u section.box.feature")
+        val items = if (videoLinks.isNotEmpty()) {
+            videoLinks.mapNotNull { link ->
+                link.toSearchResult()
+            }.distinctBy { it.url }
+        } else {
+            // Fallback selectors (just in case)
+            document.select("section.box.features div.6u section.box.feature")
                 .ifEmpty { document.select("div.box.page-content div.row section") }
                 .ifEmpty { document.select("div.img-container") }
-                .mapNotNull { it.toSearchResult() }
-            return newHomePageResponse(
-                list = HomePageList(name = request.name, list = fallbackItems, isHorizontalImages = true),
-                hasNext = fallbackItems.isNotEmpty() && page < 10
-            )
+                .mapNotNull { container ->
+                    val link = container.selectFirst("a[href*='/hdporn/']") ?: return@mapNotNull null
+                    link.toSearchResult()
+                }
         }
 
-        // 2. For each link, create a search result
-        val items = videoLinks.mapNotNull { link ->
-            link.toSearchResult()
-        }.distinctBy { it.url } // avoid duplicates
-
+        // Pagination detection
         val hasNext = document.select("div.pagi a[href*='/hdporn/']").isNotEmpty() ||
                 document.select("div.pagi a[href*='/category/']").isNotEmpty() ||
                 document.select("a.next").isNotEmpty() ||
@@ -81,12 +89,11 @@ class HQPornerProvider : MainAPI() {
         )
     }
 
-    // Extract video info directly from the <a> element
+    // Extract from <a> element
     private fun Element.toSearchResult(): SearchResponse? {
         val href = this.attr("href")
         if (href.isBlank()) return null
 
-        // Title: try title attribute, then link text, then image alt
         var title = this.attr("title").trim()
         if (title.isBlank()) title = this.text().trim()
         if (title.isBlank()) {
@@ -95,16 +102,14 @@ class HQPornerProvider : MainAPI() {
         }
         if (title.isBlank()) title = "No Title"
 
-        // Capitalise each word
         val formattedTitle = title.split(" ")
             .joinToString(" ") { it.replaceFirstChar { char -> char.uppercase() } }
 
-        // Poster: find image inside the link or its parent
         var poster: String? = this.select("img").attr("src")
         if (poster.isNullOrBlank()) poster = this.select("img").attr("data-src")
         if (poster.isNullOrBlank()) poster = this.select("img").attr("data-original")
+        // If no image inside link, check parent
         if (poster.isNullOrBlank()) {
-            // If the image is not inside the link, try the parent (common in some layouts)
             val parent = this.parent()
             if (parent != null) {
                 poster = parent.select("img").attr("src")
@@ -121,12 +126,6 @@ class HQPornerProvider : MainAPI() {
         ) {
             this.posterUrl = poster
         }
-    }
-
-    // For fallback containers (old selectors) – kept for compatibility
-    private fun Element.toSearchResultFallback(): SearchResponse? {
-        val link = this.selectFirst("a[href*='/hdporn/']") ?: return null
-        return link.toSearchResult()
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
