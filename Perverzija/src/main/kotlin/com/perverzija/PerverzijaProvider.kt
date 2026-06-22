@@ -19,7 +19,7 @@ import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import kotlinx.coroutines.delay   // kept as-is
+// import kotlinx.coroutines.delay   // remove this part
 import org.jsoup.nodes.Element
 
 class Perverzija : MainAPI() {
