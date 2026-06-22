@@ -112,27 +112,64 @@ open class Xtremestream : ExtractorApi() {
         }
 
         // ----- Method 3: look for JSON config inside scripts (common in new players) -----
-        val jsonRegex = Regex(""""file"\s*:\s*"([^"]+\.(mp4|m3u8))"""")
-        jsonRegex.findAll(html).forEach { match ->
-            val videoUrl = match.groupValues[1]
-            if (videoUrl.isNotBlank()) {
+        val jsonPatterns = listOf(
+            Regex(""""file"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
+            Regex(""""src"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
+            Regex(""""url"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
+            Regex(""""source"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
+            Regex(""""video"\s*:\s*"([^"]+\.(mp4|m3u8))""")
+        )
+        jsonPatterns.forEach { pattern ->
+            pattern.findAll(html).forEach { match ->
+                val videoUrl = match.groupValues[1]
+                if (videoUrl.isNotBlank()) {
+                    callback.invoke(
+                        newExtractorLink(
+                            name,
+                            name,
+                            videoUrl,
+                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+                        ) {
+                            this.referer = url
+                            this.quality = guessQuality(videoUrl)
+                            this.headers = mapOf(
+                                "Referer" to url,
+                                "User-Agent" to USER_AGENT
+                            )
+                        }
+                    )
+                    return
+                }
+            }
+        }
+
+        // ----- Method 4: Try to guess the manifest URL from the data parameter -----
+        val dataParam = url.substringAfter("data=").substringBefore("&")
+        if (dataParam.isNotBlank()) {
+            val baseUrl = url.substringBefore("/player/")
+            val possibleUrls = listOf(
+                "$baseUrl/api/video/$dataParam/master.m3u8",
+                "$baseUrl/api/manifest/$dataParam",
+                "$baseUrl/manifest/$dataParam.m3u8"
+            )
+            possibleUrls.forEach { manifestUrl ->
                 callback.invoke(
                     newExtractorLink(
                         name,
                         name,
-                        videoUrl,
-                        type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+                        manifestUrl,
+                        type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = url
-                        this.quality = guessQuality(videoUrl)
+                        this.quality = 0
                         this.headers = mapOf(
                             "Referer" to url,
                             "User-Agent" to USER_AGENT
                         )
                     }
                 )
-                return
             }
+            return
         }
     }
 
