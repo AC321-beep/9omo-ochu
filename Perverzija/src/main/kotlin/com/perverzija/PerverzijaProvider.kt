@@ -19,7 +19,6 @@ import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-// import kotlinx.coroutines.delay   // kept commented out (unused)
 import org.jsoup.nodes.Element
 
 class Perverzija : MainAPI() {
@@ -119,7 +118,6 @@ class Perverzija : MainAPI() {
         }
     }
 
-    // ---------- UPDATED loadLinks with fallback ----------
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -134,10 +132,10 @@ class Perverzija : MainAPI() {
             return false
         }
 
-        // 1. Try the custom Xtremestream extractor
+        // 1. Try the custom extractor (which now has multiple methods)
         val success = Xtremestream().getUrl(iframeUrl, data, subtitleCallback, callback)
 
-        // 2. If it didn't find any links, fallback to CloudStream's built-in extractor
+        // 2. If it still fails, fallback to CloudStream's built‑in extractor
         if (!success) {
             return loadExtractor(iframeUrl, subtitleCallback, callback)
         }
