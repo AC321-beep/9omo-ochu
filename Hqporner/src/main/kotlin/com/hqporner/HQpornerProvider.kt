@@ -6,6 +6,9 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 
+// Import the built‑in M3U8 helper
+import com.lagradost.cloudstream3.utils.loadM3u8
+
 class HQPornerProvider : MainAPI() {
     override var mainUrl = "https://hqporner.com"
     override var name = "HQPorner"
@@ -63,18 +66,15 @@ class HQPornerProvider : MainAPI() {
         val formattedTitle = title.split(" ")
             .joinToString(" ") { it.replaceFirstChar { char -> char.uppercase() } }
 
-        // --- Poster extraction (fixed) ---
+        // --- Poster extraction (unchanged) ---
         var poster: String? = link.selectFirst("img")?.attr("src")
         if (poster.isNullOrBlank()) poster = link.selectFirst("img")?.attr("data-src")
-        // If still blank, try the container's image (fallback)
         if (poster.isNullOrBlank()) {
             poster = this.selectFirst("img")?.attr("src")
         }
-        // Convert // to https:// if needed
         if (!poster.isNullOrBlank() && poster.startsWith("//")) {
             poster = "https:$poster"
         }
-        // Use fixUrlNull to make absolute
         poster = fixUrlNull(poster)
 
         return newMovieSearchResponse(
@@ -110,7 +110,6 @@ class HQPornerProvider : MainAPI() {
         val formattedTitle = title.split(" ")
             .joinToString(" ") { it.replaceFirstChar { char -> char.uppercase() } }
 
-        // Poster from the stored JSON (already fixed)
         val poster = loadData.posterUrl
         val plot = document.select("div.description p").text()
             .ifEmpty { document.select("meta[name='description']")?.attr("content").orEmpty() }
@@ -129,7 +128,7 @@ class HQPornerProvider : MainAPI() {
     ): Boolean {
         val document = app.get(data, headers = headers).document
 
-        // 1. Find the iframe (mydaddy.cc or similar)
+        // 1. Find the iframe (e.g., mydaddy.cc)
         val iframe = document.selectFirst("iframe[src*='mydaddy.cc']")
             ?: document.selectFirst("iframe[src*='/video/']")
             ?: document.selectFirst("iframe[src*='embed']")
@@ -138,37 +137,39 @@ class HQPornerProvider : MainAPI() {
             var iframeSrc = iframe.attr("src")
             if (iframeSrc.startsWith("//")) iframeSrc = "https:$iframeSrc"
             if (iframeSrc.isNotBlank()) {
-                // Fetch the iframe page and look for a video source
+                // Fetch the iframe page
                 val iframeDoc = app.get(iframeSrc, headers = headers).document
                 val iframeHtml = iframeDoc.toString()
 
-                // Try to find a direct video URL
+                // Try to extract a video URL
                 var videoUrl = iframeDoc.selectFirst("video source")?.attr("src")
+                if (videoUrl.isNullOrBlank()) videoUrl = iframeDoc.selectFirst("video")?.attr("src")
                 if (videoUrl.isNullOrBlank()) {
-                    videoUrl = iframeDoc.selectFirst("video")?.attr("src")
-                }
-                if (videoUrl.isNullOrBlank()) {
-                    // Search for .mp4 or .m3u8 in the HTML
                     val regex = Regex("""(https?://[^\s"']+\.(mp4|m3u8))""")
                     videoUrl = regex.find(iframeHtml)?.groupValues?.get(1)
                 }
 
                 if (!videoUrl.isNullOrBlank()) {
-                    callback(
-                        newExtractorLink(
-                            source = name,
-                            name = name,
-                            url = videoUrl,
-                            type = if (videoUrl.contains(".m3u8")) M3U8 else INFER_TYPE
-                        ) {
-                            this.referer = mainUrl
-                            this.quality = guessQuality(videoUrl)
-                        }
-                    )
+                    if (videoUrl.contains(".m3u8")) {
+                        // Use the built‑in M3U8 helper
+                        loadM3u8(videoUrl, headers, callback)
+                    } else {
+                        callback(
+                            newExtractorLink(
+                                source = name,
+                                name = name,
+                                url = videoUrl,
+                                type = INFER_TYPE
+                            ) {
+                                this.referer = mainUrl
+                                this.quality = guessQuality(videoUrl)
+                            }
+                        )
+                    }
                     return true
                 }
 
-                // If still no video, let loadExtractor handle the iframe (may work for common hosts)
+                // If we still don't have a direct video, try loadExtractor on the iframe URL
                 return loadExtractor(iframeSrc, subtitleCallback, callback)
             }
         }
