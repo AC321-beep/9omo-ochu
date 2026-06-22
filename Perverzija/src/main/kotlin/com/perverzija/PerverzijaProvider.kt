@@ -19,7 +19,6 @@ import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-// import kotlinx.coroutines.delay   // kept commented out (unused)
 import org.jsoup.nodes.Element
 
 class Perverzija : MainAPI() {
@@ -119,7 +118,7 @@ class Perverzija : MainAPI() {
         }
     }
 
-    // ---------- Updated loadLinks with fallback ----------
+    // ---------- UPDATED loadLinks with reliable fallback ----------
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -134,15 +133,20 @@ class Perverzija : MainAPI() {
             return false
         }
 
-        // 1. First try the built‑in extractor (handles many hosts)
-        if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
-            return true
+        // 1. Try the custom extractor first (it has 3 extraction methods)
+        var linkFound = false
+        val wrapperCallback: (ExtractorLink) -> Unit = { link ->
+            linkFound = true
+            callback(link)
         }
 
-        // 2. If that fails, try the custom Xtremestream extractor
-        Xtremestream().getUrl(iframeUrl, data, subtitleCallback, callback)
-        // The custom extractor doesn't return a boolean, but we assume it may have added links.
-        // We return true because we attempted to extract links (even if none found, the user will see an error).
+        Xtremestream().getUrl(iframeUrl, data, subtitleCallback, wrapperCallback)
+
+        // 2. If custom extractor didn't find any links, fallback to built‑in loadExtractor
+        if (!linkFound) {
+            return loadExtractor(iframeUrl, subtitleCallback, callback)
+        }
+
         return true
     }
 }
