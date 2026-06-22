@@ -118,7 +118,6 @@ class Perverzija : MainAPI() {
         }
     }
 
-    // ---------- UPDATED loadLinks with reliable fallback ----------
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -133,20 +132,24 @@ class Perverzija : MainAPI() {
             return false
         }
 
-        // 1. Try the custom extractor first (it has 3 extraction methods)
+        // Stage 1: Try CloudStream's built‑in extractor on the main video page URL.
+        // This often works because the page contains the player embed information.
+        if (loadExtractor(data, subtitleCallback, callback)) {
+            return true
+        }
+
+        // Stage 2: Try our custom extractor on the iframe URL.
         var linkFound = false
         val wrapperCallback: (ExtractorLink) -> Unit = { link ->
             linkFound = true
             callback(link)
         }
-
         Xtremestream().getUrl(iframeUrl, data, subtitleCallback, wrapperCallback)
-
-        // 2. If custom extractor didn't find any links, fallback to built‑in loadExtractor
-        if (!linkFound) {
-            return loadExtractor(iframeUrl, subtitleCallback, callback)
+        if (linkFound) {
+            return true
         }
 
-        return true
+        // Stage 3: Fallback to loadExtractor on the iframe URL.
+        return loadExtractor(iframeUrl, subtitleCallback, callback)
     }
 }
