@@ -1,6 +1,5 @@
-package com.CXXX
+package com.perverzija
 
-import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.*
@@ -10,7 +9,7 @@ import okhttp3.Request
 import com.lagradost.cloudstream3.USER_AGENT
 import org.jsoup.Jsoup
 
-open class Xtremestream : ExtractorApi() {
+open class Extractor : ExtractorApi() {
     override var name = "Xtremestream"
     override var mainUrl = "https://pervl4.xtremestream.xyz"
     override val requiresReferer = true
