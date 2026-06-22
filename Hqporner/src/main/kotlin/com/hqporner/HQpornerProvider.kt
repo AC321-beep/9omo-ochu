@@ -6,7 +6,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 
-// Import the built‑in M3U8 helper
+// Explicit import for the M3U8 helper
 import com.lagradost.cloudstream3.utils.loadM3u8
 
 class HQPornerProvider : MainAPI() {
