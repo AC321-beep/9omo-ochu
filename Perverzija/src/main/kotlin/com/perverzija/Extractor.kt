@@ -9,7 +9,7 @@ import okhttp3.Request
 import com.lagradost.cloudstream3.USER_AGENT
 import org.jsoup.Jsoup
 
-open class Extractor : ExtractorApi() {
+open class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
     override var mainUrl = "https://pervl4.xtremestream.xyz"
     override val requiresReferer = true
