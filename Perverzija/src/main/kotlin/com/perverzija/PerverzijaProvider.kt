@@ -19,7 +19,7 @@ import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-//import kotlinx.coroutines.delay   // kept as in original
+// import kotlinx.coroutines.delay   // kept commented out (unused)
 import org.jsoup.nodes.Element
 
 class Perverzija : MainAPI() {
@@ -34,11 +34,11 @@ class Perverzija : MainAPI() {
 
     override val mainPage = mainPageOf(
         "$mainUrl/page/%d/" to "Home",
-        "$mainUrl/tag/creampie/page/%d/" to "Creampie",          // ← fixed
-        "$mainUrl/tag/family-taboo/page/%d/" to "Family Taboo",  // ← fixed
-        "$mainUrl/tag/milf/page/%d/" to "Milf",                  // ← fixed
-        "$mainUrl/tag/wife/page/%d/" to "Wife",                  // ← fixed
-        "$mainUrl/tag/teen/page/%d/" to "Teen",                  // ← fixed
+        "$mainUrl/tag/creampie/page/%d/" to "Creampie",
+        "$mainUrl/tag/family-taboo/page/%d/" to "Family Taboo",
+        "$mainUrl/tag/milf/page/%d/" to "Milf",
+        "$mainUrl/tag/wife/page/%d/" to "Wife",
+        "$mainUrl/tag/teen/page/%d/" to "Teen",
         "$mainUrl/featured-scenes/page/%d/?orderby=date" to "Featured",
         "$mainUrl/studio/onlyfans/page/%d/" to "Onlyfans",
         "$mainUrl/studio/brazzers/page/%d/" to "Brazzers",
@@ -64,7 +64,6 @@ class Perverzija : MainAPI() {
         )
     }
 
-    // ---- Everything below is unchanged from your original working code ----
     private fun Element.toRecommendationResult(): SearchResponse? {
         val posterUrl = fixUrlNull(this.select("dt a img").attr("src"))
         val title = this.select("dd a").text() ?: return null
@@ -120,6 +119,7 @@ class Perverzija : MainAPI() {
         }
     }
 
+    // ---------- UPDATED loadLinks with fallback ----------
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -128,8 +128,20 @@ class Perverzija : MainAPI() {
     ): Boolean {
         val response = app.get(data, interceptor = cfInterceptor)
         val document = response.document
+
         val iframeUrl = document.select("div#player-embed iframe").attr("src")
-        Xtremestream().getUrl(iframeUrl, data, subtitleCallback, callback)
+        if (iframeUrl.isBlank()) {
+            return false
+        }
+
+        // 1. Try the custom Xtremestream extractor
+        val success = Xtremestream().getUrl(iframeUrl, data, subtitleCallback, callback)
+
+        // 2. If it didn't find any links, fallback to CloudStream's built-in extractor
+        if (!success) {
+            return loadExtractor(iframeUrl, subtitleCallback, callback)
+        }
+
         return true
     }
 }
