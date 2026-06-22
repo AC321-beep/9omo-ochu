@@ -8,6 +8,6 @@ import com.lagradost.cloudstream3.plugins.Plugin
 class PerverzijaPlugin : Plugin() {
     override fun load(context: Context) {
         registerMainAPI(Perverzija())
-        registerExtractorAPI(Extractor())   // ← class name changed
+        registerExtractorAPI(Xtremestream())
     }
 }
