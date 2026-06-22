@@ -6,9 +6,6 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 
-// Explicit import for the M3U8 helper
-import com.lagradost.cloudstream3.utils.loadM3u8
-
 class HQPornerProvider : MainAPI() {
     override var mainUrl = "https://hqporner.com"
     override var name = "HQPorner"
@@ -150,22 +147,8 @@ class HQPornerProvider : MainAPI() {
                 }
 
                 if (!videoUrl.isNullOrBlank()) {
-                    if (videoUrl.contains(".m3u8")) {
-                        // Use the built‑in M3U8 helper
-                        loadM3u8(videoUrl, headers, callback)
-                    } else {
-                        callback(
-                            newExtractorLink(
-                                source = name,
-                                name = name,
-                                url = videoUrl,
-                                type = INFER_TYPE
-                            ) {
-                                this.referer = mainUrl
-                                this.quality = guessQuality(videoUrl)
-                            }
-                        )
-                    }
+                    // Use loadExtractor – it handles both MP4 and M3U8
+                    loadExtractor(videoUrl, subtitleCallback, callback)
                     return true
                 }
 
@@ -185,17 +168,7 @@ class HQPornerProvider : MainAPI() {
         // 3. Last resort: direct .mp4 in the page
         val mp4Url = Regex("""(https?://[^\s"']+\.mp4)""").find(docHtml)?.groupValues?.get(1)
         if (!mp4Url.isNullOrBlank()) {
-            callback(
-                newExtractorLink(
-                    source = name,
-                    name = name,
-                    url = mp4Url,
-                    type = INFER_TYPE
-                ) {
-                    this.referer = mainUrl
-                    this.quality = guessQuality(mp4Url)
-                }
-            )
+            loadExtractor(mp4Url, subtitleCallback, callback)
             return true
         }
 
