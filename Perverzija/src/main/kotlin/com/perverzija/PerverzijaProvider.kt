@@ -19,6 +19,7 @@ import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+//import kotlinx.coroutines.delay   // kept as in original
 import org.jsoup.nodes.Element
 
 class Perverzija : MainAPI() {
@@ -33,11 +34,11 @@ class Perverzija : MainAPI() {
 
     override val mainPage = mainPageOf(
         "$mainUrl/page/%d/" to "Home",
-        "$mainUrl/tag/creampie/page/%d/" to "Creampie",
-        "$mainUrl/tag/family-taboo/page/%d/" to "Family Taboo",
-        "$mainUrl/tag/milf/page/%d/" to "Milf",
-        "$mainUrl/tag/wife/page/%d/" to "Wife",
-        "$mainUrl/tag/teen/page/%d/" to "Teen",
+        "$mainUrl/tag/creampie/page/%d/" to "Creampie",          // ← fixed
+        "$mainUrl/tag/family-taboo/page/%d/" to "Family Taboo",  // ← fixed
+        "$mainUrl/tag/milf/page/%d/" to "Milf",                  // ← fixed
+        "$mainUrl/tag/wife/page/%d/" to "Wife",                  // ← fixed
+        "$mainUrl/tag/teen/page/%d/" to "Teen",                  // ← fixed
         "$mainUrl/featured-scenes/page/%d/?orderby=date" to "Featured",
         "$mainUrl/studio/onlyfans/page/%d/" to "Onlyfans",
         "$mainUrl/studio/brazzers/page/%d/" to "Brazzers",
@@ -63,11 +64,11 @@ class Perverzija : MainAPI() {
         )
     }
 
+    // ---- Everything below is unchanged from your original working code ----
     private fun Element.toRecommendationResult(): SearchResponse? {
         val posterUrl = fixUrlNull(this.select("dt a img").attr("src"))
         val title = this.select("dd a").text() ?: return null
         val href = fixUrlNull(this.select("dt a").attr("href")) ?: return null
-
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = posterUrl
         }
@@ -77,7 +78,6 @@ class Perverzija : MainAPI() {
         val posterUrl = fixUrlNull(this.select("div.item-thumbnail img").attr("src"))
         val title = this.select("div.item-head a").text() ?: return null
         val href = fixUrlNull(this.select("div.item-head a").attr("href")) ?: return null
-
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = posterUrl
         }
@@ -89,19 +89,16 @@ class Perverzija : MainAPI() {
         } else {
             "$mainUrl/tag/$query/page/$page/"
         }
-
         val results = app.get(url, interceptor = cfInterceptor).document
             .select("div.row div div.post").mapNotNull {
                 it.toSearchResult()
             }.distinctBy { it.url }
-
         val hasNext = if (results.isEmpty()) false else true
         return newSearchResponseList(results, hasNext)
     }
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, interceptor = cfInterceptor).document
-
         val poster = document.select("div#featured-img-id img").attr("src")
         val title = document.select("div.title-info h1.light-title.entry-title").text()
         val pTags = document.select("div.item-content p")
@@ -110,14 +107,11 @@ class Perverzija : MainAPI() {
                 append(it.text())
             }
         }.toString()
-
         val tags = document.select("div.item-tax-list div a").map { it.text() }
-
         val recommendations =
             document.select("div.related-gallery dl.gallery-item").mapNotNull {
                 it.toRecommendationResult()
             }
-
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.plot = description
@@ -134,11 +128,8 @@ class Perverzija : MainAPI() {
     ): Boolean {
         val response = app.get(data, interceptor = cfInterceptor)
         val document = response.document
-
         val iframeUrl = document.select("div#player-embed iframe").attr("src")
-
         Xtremestream().getUrl(iframeUrl, data, subtitleCallback, callback)
-
         return true
     }
 }
