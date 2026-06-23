@@ -4,9 +4,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.SubtitleFile
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Element
 
 class HQPornerProvider : MainAPI() {
@@ -105,7 +102,7 @@ class HQPornerProvider : MainAPI() {
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
+        subtitleCallback: (com.lagradost.cloudstream3.utils.SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val doc = app.get(data, headers = headers).document
@@ -169,17 +166,15 @@ class HQPornerProvider : MainAPI() {
                 val url = fixUrl(videoSrc)
                 val quality = guessQuality(url)
                 callback.invoke(
-                    newExtractorLink(
+                    ExtractorLink(
                         source = "HQPorner",
                         name = "HQPorner ${quality}p",
                         url = url,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.quality = quality
-                        this.isM3u8 = url.contains(".m3u8")
-                        this.referer = iframeUrl
-                        this.headers = headers
-                    }
+                        referer = iframeUrl,
+                        quality = quality,
+                        isM3u8 = url.contains(".m3u8"),
+                        headers = headers
+                    )
                 )
                 return true
             }
@@ -197,17 +192,15 @@ class HQPornerProvider : MainAPI() {
                     val url = fixUrl(match.groupValues[1])
                     val quality = guessQuality(url)
                     callback.invoke(
-                        newExtractorLink(
+                        ExtractorLink(
                             source = "HQPorner",
                             name = "HQPorner ${quality}p",
                             url = url,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.quality = quality
-                            this.isM3u8 = url.contains(".m3u8")
-                            this.referer = iframeUrl
-                            this.headers = headers
-                        }
+                            referer = iframeUrl,
+                            quality = quality,
+                            isM3u8 = url.contains(".m3u8"),
+                            headers = headers
+                        )
                     )
                     return true
                 }
