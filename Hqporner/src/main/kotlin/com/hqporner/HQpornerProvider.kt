@@ -1,10 +1,10 @@
 package com.hqporner
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 
 class HQPornerProvider : MainAPI() {
@@ -106,57 +106,43 @@ class HQPornerProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data, headers = headers).document
+        // Stage 1: Try CloudStream's built‑in extractor on the main video page.
+        // This often works because the page contains the player embed information.
+        if (loadExtractor(data, subtitleCallback, callback)) {
+            return true
+        }
 
-        // 1. Find the main iframe (mydaddy.cc)
-        var iframeSrc = doc.selectFirst("div.video-container iframe")?.attr("src")
-            ?: doc.selectFirst("iframe[src*='mydaddy.cc']")?.attr("src")
+        // Stage 2: Manually extract iframe URL and try a custom extractor.
+        val document = app.get(data, headers = headers).document
+        val iframeSrc = document.selectFirst("div.video-container iframe")?.attr("src")
+            ?: document.selectFirst("iframe[src*='mydaddy.cc']")?.attr("src")
 
         if (iframeSrc.isNullOrBlank()) {
-            return tryAltPlayerFallback(doc, callback)
+            return false
         }
 
-        if (iframeSrc.startsWith("//")) iframeSrc = "https:$iframeSrc"
+        val fullIframeUrl = if (iframeSrc.startsWith("//")) "https:$iframeSrc" else iframeSrc
 
-        // 2. Extract video ID for altplayer fallback
-        val videoId = Regex("""/video/([^/]+)/""").find(iframeSrc)?.groupValues?.get(1)
-
-        // 3. Try main iframe first
-        val success = extractVideoFromIframe(iframeSrc, callback)
-        if (success) return true
-
-        // 4. If main fails and we have an ID, try the alternative player
-        if (!videoId.isNullOrBlank()) {
-            val altUrl = "$mainUrl/blocks/altplayer.php?i=//mydaddy.cc/video/$videoId/"
-            val altSuccess = extractVideoFromIframe(altUrl, callback)
-            if (altSuccess) return true
-        }
-
-        // 5. Last resort: try any other mydaddy.cc iframe on the page
-        return tryAltPlayerFallback(doc, callback)
+        // Try custom extraction from iframe (or loadExtractor on it)
+        return extractFromIframe(fullIframeUrl, data, subtitleCallback, callback)
     }
 
-    private suspend fun tryAltPlayerFallback(doc: Element, callback: (ExtractorLink) -> Unit): Boolean {
-        val iframes = doc.select("iframe[src*='mydaddy.cc']")
-        for (iframe in iframes) {
-            val src = iframe.attr("src")
-            if (src.isNotBlank()) {
-                val fullSrc = if (src.startsWith("//")) "https:$src" else src
-                val success = extractVideoFromIframe(fullSrc, callback)
-                if (success) return true
-            }
-        }
-        return false
-    }
-
-    private suspend fun extractVideoFromIframe(
+    private suspend fun extractFromIframe(
         iframeUrl: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        // First try loadExtractor on the iframe URL (some extractors may handle it)
+        if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
+            return true
+        }
+
+        // Fallback: manual parsing of the iframe content
         try {
             val page = app.get(iframeUrl, headers = headers).document
 
-            // Look for video in <video> or <source> tags
+            // Try to find video source in <video>, <source>, or meta tags
             val videoSrc = page.selectFirst("video source")?.attr("src")
                 ?: page.selectFirst("video")?.attr("src")
                 ?: page.selectFirst("source[src*='.mp4']")?.attr("src")
@@ -171,7 +157,7 @@ class HQPornerProvider : MainAPI() {
                         source = "HQPorner",
                         name = "HQPorner ${quality}p",
                         url = url,
-                        referer = iframeUrl,
+                        referer = referer,
                         quality = quality,
                         isM3u8 = url.contains(".m3u8"),
                         headers = headers
@@ -182,29 +168,23 @@ class HQPornerProvider : MainAPI() {
 
             // Search in scripts for file or video_url
             val scriptData = page.select("script").map { it.html() }.joinToString("\n")
-            val patterns = listOf(
-                Regex("""(?:file|video_url|src)\s*[:=]\s*['"]([^'"]+\.(?:mp4|m3u8))['"]""", RegexOption.IGNORE_CASE),
-                Regex("""https?://[^\s'"]+\.(mp4|m3u8)""")
-            )
-
-            for (pattern in patterns) {
-                val match = pattern.find(scriptData)
-                if (match != null) {
-                    val url = fixUrl(match.groupValues[1])
-                    val quality = guessQuality(url)
-                    callback.invoke(
-                        ExtractorLink(
-                            source = "HQPorner",
-                            name = "HQPorner ${quality}p",
-                            url = url,
-                            referer = iframeUrl,
-                            quality = quality,
-                            isM3u8 = url.contains(".m3u8"),
-                            headers = headers
-                        )
+            val pattern = Regex("""(?:file|video_url|src)\s*[:=]\s*['"]([^'"]+\.(?:mp4|m3u8))['"]""", RegexOption.IGNORE_CASE)
+            val match = pattern.find(scriptData)
+            if (match != null) {
+                val url = fixUrl(match.groupValues[1])
+                val quality = guessQuality(url)
+                callback.invoke(
+                    ExtractorLink(
+                        source = "HQPorner",
+                        name = "HQPorner ${quality}p",
+                        url = url,
+                        referer = referer,
+                        quality = quality,
+                        isM3u8 = url.contains(".m3u8"),
+                        headers = headers
                     )
-                    return true
-                }
+                )
+                return true
             }
 
             return false
