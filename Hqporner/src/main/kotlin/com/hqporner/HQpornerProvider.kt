@@ -5,9 +5,9 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Element
 
+@Suppress("DEPRECATION")
 class HQPornerProvider : MainAPI() {
     override var mainUrl = "https://m.hqporner.com"
     override var name = "HQPorner"
@@ -152,12 +152,14 @@ class HQPornerProvider : MainAPI() {
             if (!videoSrc.isNullOrBlank()) {
                 val url = fixUrl(videoSrc)
                 val quality = guessQuality(url)
-                val link = newExtractorLink("HQPorner", "HQPorner ${quality}p", url)
                 callback.invoke(
-                    link.copy(
+                    ExtractorLink(
+                        source = "HQPorner",
+                        name = "HQPorner ${quality}p",
+                        url = url,
+                        referer = referer,
                         quality = quality,
                         isM3u8 = url.contains(".m3u8"),
-                        referer = referer,
                         headers = headers
                     )
                 )
@@ -171,12 +173,14 @@ class HQPornerProvider : MainAPI() {
             if (match != null) {
                 val url = fixUrl(match.groupValues[1])
                 val quality = guessQuality(url)
-                val link = newExtractorLink("HQPorner", "HQPorner ${quality}p", url)
                 callback.invoke(
-                    link.copy(
+                    ExtractorLink(
+                        source = "HQPorner",
+                        name = "HQPorner ${quality}p",
+                        url = url,
+                        referer = referer,
                         quality = quality,
                         isM3u8 = url.contains(".m3u8"),
-                        referer = referer,
                         headers = headers
                     )
                 )
