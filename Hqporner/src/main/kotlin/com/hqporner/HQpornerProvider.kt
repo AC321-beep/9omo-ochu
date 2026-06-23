@@ -2,8 +2,10 @@ package com.hqporner
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
+import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.SubtitleFile
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Element
 
 class HQPornerProvider : MainAPI() {
@@ -92,7 +94,7 @@ class HQPornerProvider : MainAPI() {
         val loadData = tryParseJson<LoadUrl>(url) ?: return null
         val document = app.get(loadData.href, headers = headers).document
 
-        val title = document.selectFirst("h1")?.text()?.trim() ?: loadData.title
+        val title = document.selectFirst("h1")?.text()?.trim() ?: loadData.title ?: "Unknown"
         val poster = loadData.posterUrl
         val description = document.selectFirst("meta[name='description']")?.attr("content") ?: ""
 
@@ -169,10 +171,10 @@ class HQPornerProvider : MainAPI() {
                 val url = fixUrl(videoSrc)
                 val quality = guessQuality(url)
                 callback.invoke(
-                    ExtractorLink(
+                    newExtractorLink(
                         source = "HQPorner",
-                        url = url,
                         name = "HQPorner ${quality}p",
+                        url = url,
                         quality = quality,
                         isM3u8 = url.contains(".m3u8"),
                         referer = iframeUrl,
@@ -195,10 +197,10 @@ class HQPornerProvider : MainAPI() {
                     val url = fixUrl(match.groupValues[1])
                     val quality = guessQuality(url)
                     callback.invoke(
-                        ExtractorLink(
+                        newExtractorLink(
                             source = "HQPorner",
-                            url = url,
                             name = "HQPorner ${quality}p",
+                            url = url,
                             quality = quality,
                             isM3u8 = url.contains(".m3u8"),
                             referer = iframeUrl,
