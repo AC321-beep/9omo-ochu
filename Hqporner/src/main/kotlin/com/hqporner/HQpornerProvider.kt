@@ -152,13 +152,14 @@ class HQPornerProvider : MainAPI() {
             if (!videoSrc.isNullOrBlank()) {
                 val url = fixUrl(videoSrc)
                 val quality = guessQuality(url)
+                val link = newExtractorLink("HQPorner", "HQPorner ${quality}p", url)
                 callback.invoke(
-                    newExtractorLink("HQPorner", "HQPorner ${quality}p", url) {
-                        this.quality = quality
-                        this.isM3u8 = url.contains(".m3u8")
-                        this.referer = referer
-                        this.headers = headers
-                    }
+                    link.copy(
+                        quality = quality,
+                        isM3u8 = url.contains(".m3u8"),
+                        referer = referer,
+                        headers = headers
+                    )
                 )
                 return true
             }
@@ -170,13 +171,14 @@ class HQPornerProvider : MainAPI() {
             if (match != null) {
                 val url = fixUrl(match.groupValues[1])
                 val quality = guessQuality(url)
+                val link = newExtractorLink("HQPorner", "HQPorner ${quality}p", url)
                 callback.invoke(
-                    newExtractorLink("HQPorner", "HQPorner ${quality}p", url) {
-                        this.quality = quality
-                        this.isM3u8 = url.contains(".m3u8")
-                        this.referer = referer
-                        this.headers = headers
-                    }
+                    link.copy(
+                        quality = quality,
+                        isM3u8 = url.contains(".m3u8"),
+                        referer = referer,
+                        headers = headers
+                    )
                 )
                 return true
             }
