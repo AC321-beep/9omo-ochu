@@ -152,9 +152,10 @@ class HQPornerProvider : MainAPI() {
             // <video><source> tags
             val sources = page.select("video source")
             if (sources.isNotEmpty()) {
+                // best is non-null because sources is not empty, but !! clears any nullable inference issues
                 val best = sources.maxByOrNull { s ->
                     guessQualityFromLabel(s.attr("label") ?: s.attr("title") ?: "")
-                } ?: sources.first()
+                } ?: sources.first()!!
                 val src = best.attr("src")
                 if (src.isNotBlank()) {
                     emitLink(fixUrl(src), referer, callback, guessQualityFromLabel(best.attr("label")))
