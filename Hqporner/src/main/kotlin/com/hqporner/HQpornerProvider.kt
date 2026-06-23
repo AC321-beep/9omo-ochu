@@ -111,7 +111,7 @@ class HQPornerProvider : MainAPI() {
         val pageHeaders = baseHeaders.toMutableMap().apply { put("Referer", mainUrl) }
         val document = app.get(videoPageUrl, headers = pageHeaders).document
 
-        // 2. Look for the usual iframe
+        // 2. Look for the usual iframe (all selectFirst calls use safe ?.)
         val iframeSrc = document.selectFirst("div.video-container iframe")?.attr("src")
             ?: document.selectFirst("iframe[src*='mydaddy.cc']")?.attr("src")
             ?: document.selectFirst("iframe[src]")?.attr("src")
@@ -225,7 +225,7 @@ class HQPornerProvider : MainAPI() {
             url.contains("1080", ignoreCase = true) -> 1080
             url.contains("720", ignoreCase = true) -> 720
             url.contains("360", ignoreCase = true) -> 360
-            else -> Qualities.Unknown.value
+            else -> 0   // unknown quality, will display as "Stream"
         }
     }
 
@@ -234,7 +234,7 @@ class HQPornerProvider : MainAPI() {
             label.contains("1080") -> 1080
             label.contains("720") -> 720
             label.contains("360") -> 360
-            else -> Qualities.Unknown.value
+            else -> 0
         }
     }
 
