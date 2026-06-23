@@ -5,7 +5,6 @@ import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Element
 
 class HQPornerProvider : MainAPI() {
@@ -101,6 +100,7 @@ class HQPornerProvider : MainAPI() {
         }
     }
 
+    @Suppress("DEPRECATION")
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -127,6 +127,7 @@ class HQPornerProvider : MainAPI() {
         return extractFromIframe(fullIframeUrl, data, subtitleCallback, callback)
     }
 
+    @Suppress("DEPRECATION")
     private suspend fun extractFromIframe(
         iframeUrl: String,
         referer: String,
@@ -153,13 +154,13 @@ class HQPornerProvider : MainAPI() {
                 val url = fixUrl(videoSrc)
                 val quality = guessQuality(url)
                 callback.invoke(
-                    newExtractorLink(
+                    ExtractorLink(
                         source = "HQPorner",
                         name = "HQPorner ${quality}p",
                         url = url,
+                        referer = referer,
                         quality = quality,
                         isM3u8 = url.contains(".m3u8"),
-                        referer = referer,
                         headers = headers
                     )
                 )
@@ -174,13 +175,13 @@ class HQPornerProvider : MainAPI() {
                 val url = fixUrl(match.groupValues[1])
                 val quality = guessQuality(url)
                 callback.invoke(
-                    newExtractorLink(
+                    ExtractorLink(
                         source = "HQPorner",
                         name = "HQPorner ${quality}p",
                         url = url,
+                        referer = referer,
                         quality = quality,
                         isM3u8 = url.contains(".m3u8"),
-                        referer = referer,
                         headers = headers
                     )
                 )
