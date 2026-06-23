@@ -63,7 +63,6 @@ class HQPornerProvider : MainAPI() {
         val formattedTitle = title.split(" ")
             .joinToString(" ") { it.replaceFirstChar { char -> char.uppercase() } }
 
-        // --- Poster extraction (unchanged) ---
         var poster: String? = link.selectFirst("img")?.attr("src")
         if (poster.isNullOrBlank()) poster = link.selectFirst("img")?.attr("data-src")
         if (poster.isNullOrBlank()) {
@@ -125,7 +124,12 @@ class HQPornerProvider : MainAPI() {
     ): Boolean {
         val document = app.get(data, headers = headers).document
 
-        // 1. Find the iframe (e.g., mydaddy.cc)
+        // ----- Stage 1: Try loadExtractor on the main page -----
+        if (loadExtractor(data, subtitleCallback, callback)) {
+            return true
+        }
+
+        // ----- Stage 2: Extract iframe and parse its content -----
         val iframe = document.selectFirst("iframe[src*='mydaddy.cc']")
             ?: document.selectFirst("iframe[src*='/video/']")
             ?: document.selectFirst("iframe[src*='embed']")
@@ -134,30 +138,45 @@ class HQPornerProvider : MainAPI() {
             var iframeSrc = iframe.attr("src")
             if (iframeSrc.startsWith("//")) iframeSrc = "https:$iframeSrc"
             if (iframeSrc.isNotBlank()) {
-                // Fetch the iframe page
                 val iframeDoc = app.get(iframeSrc, headers = headers).document
                 val iframeHtml = iframeDoc.toString()
 
-                // Try to extract a video URL
-                var videoUrl = iframeDoc.selectFirst("video source")?.attr("src")
-                if (videoUrl.isNullOrBlank()) videoUrl = iframeDoc.selectFirst("video")?.attr("src")
+                var videoUrl: String? = null
+
+                // 2a: <video> or <source> tags
+                videoUrl = iframeDoc.selectFirst("video source")?.attr("src")
                 if (videoUrl.isNullOrBlank()) {
-                    val regex = Regex("""(https?://[^\s"']+\.(mp4|m3u8))""")
-                    videoUrl = regex.find(iframeHtml)?.groupValues?.get(1)
+                    videoUrl = iframeDoc.selectFirst("video")?.attr("src")
+                }
+
+                // 2b: JSON config inside scripts
+                if (videoUrl.isNullOrBlank()) {
+                    val patterns = listOf(
+                        Regex("""["'](?:file|src|url|source|video|manifest|playlist)["']\s*:\s*["'](https?://[^"']+\.(m3u8|mp4))["']"""),
+                        Regex("""["'](?:file|src|url|source|video|manifest|playlist)["']\s*:\s*["'](//[^"']+\.(m3u8|mp4))["']""")
+                    )
+                    for (pattern in patterns) {
+                        val match = pattern.find(iframeHtml)
+                        if (match != null) {
+                            videoUrl = match.groupValues[1]
+                            if (!videoUrl.startsWith("http")) {
+                                videoUrl = "https:$videoUrl"
+                            }
+                            break
+                        }
+                    }
                 }
 
                 if (!videoUrl.isNullOrBlank()) {
-                    // Use loadExtractor – it handles both MP4 and M3U8
-                    loadExtractor(videoUrl, subtitleCallback, callback)
-                    return true
+                    return loadExtractor(videoUrl, subtitleCallback, callback)
                 }
 
-                // If we still don't have a direct video, try loadExtractor on the iframe URL
+                // 2c: If nothing found, try loadExtractor on the iframe URL itself
                 return loadExtractor(iframeSrc, subtitleCallback, callback)
             }
         }
 
-        // 2. Fallback: altplayer regex from the original code
+        // ----- Stage 3: altplayer regex -----
         val docHtml = document.toString()
         val rawUrl = Regex("""url: '/blocks/altplayer\.php\?i=//(.*?)',""").find(docHtml)?.groupValues?.get(1)
         if (!rawUrl.isNullOrBlank()) {
@@ -165,11 +184,10 @@ class HQPornerProvider : MainAPI() {
             return loadExtractor(href, subtitleCallback, callback)
         }
 
-        // 3. Last resort: direct .mp4 in the page
-        val mp4Url = Regex("""(https?://[^\s"']+\.mp4)""").find(docHtml)?.groupValues?.get(1)
-        if (!mp4Url.isNullOrBlank()) {
-            loadExtractor(mp4Url, subtitleCallback, callback)
-            return true
+        // ----- Stage 4: Direct mp4/m3u8 in main page -----
+        val directUrl = Regex("""(https?://[^\s"']+\.(mp4|m3u8))""").find(docHtml)?.groupValues?.get(1)
+        if (!directUrl.isNullOrBlank()) {
+            return loadExtractor(directUrl, subtitleCallback, callback)
         }
 
         return false
