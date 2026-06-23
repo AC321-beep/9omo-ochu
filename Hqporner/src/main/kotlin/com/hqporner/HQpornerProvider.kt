@@ -4,7 +4,9 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Element
 
 @Suppress("DEPRECATION")
@@ -151,18 +153,7 @@ class HQPornerProvider : MainAPI() {
 
             if (!videoSrc.isNullOrBlank()) {
                 val url = fixUrl(videoSrc)
-                val quality = guessQuality(url)
-                callback.invoke(
-                    ExtractorLink(
-                        source = "HQPorner",
-                        name = "HQPorner ${quality}p",
-                        url = url,
-                        referer = referer,
-                        quality = quality,
-                        isM3u8 = url.contains(".m3u8"),
-                        headers = headers
-                    )
-                )
+                emitLink(url, referer, callback)
                 return true
             }
 
@@ -172,18 +163,7 @@ class HQPornerProvider : MainAPI() {
             val match = pattern.find(scriptData)
             if (match != null) {
                 val url = fixUrl(match.groupValues[1])
-                val quality = guessQuality(url)
-                callback.invoke(
-                    ExtractorLink(
-                        source = "HQPorner",
-                        name = "HQPorner ${quality}p",
-                        url = url,
-                        referer = referer,
-                        quality = quality,
-                        isM3u8 = url.contains(".m3u8"),
-                        headers = headers
-                    )
-                )
+                emitLink(url, referer, callback)
                 return true
             }
 
@@ -192,6 +172,40 @@ class HQPornerProvider : MainAPI() {
             e.printStackTrace()
             return false
         }
+    }
+
+    /**
+     * Builds and emits an ExtractorLink via the non-deprecated `newExtractorLink` builder.
+     *
+     * Note: outer values are copied into local vals (qualityValue/refererValue/headersValue)
+     * BEFORE entering the builder lambda. ExtractorLink's own `quality`/`referer`/`headers`
+     * properties have the same names, and inside a `Receiver.() -> Unit` lambda those
+     * receiver properties shadow identically-named variables from the enclosing scope, so
+     * referencing the outer values directly inside the lambda would silently read the
+     * (still-default) receiver property instead - this copy step avoids that trap.
+     */
+    private suspend fun emitLink(
+        url: String,
+        referer: String,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val qualityValue = guessQuality(url)
+        val refererValue = referer
+        val headersValue = headers
+        val linkType = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+
+        callback.invoke(
+            newExtractorLink(
+                source = "HQPorner",
+                name = "HQPorner ${qualityValue}p",
+                url = url,
+                type = linkType
+            ) {
+                this.referer = refererValue
+                this.quality = qualityValue
+                this.headers = headersValue
+            }
+        )
     }
 
     private fun guessQuality(url: String): Int {
