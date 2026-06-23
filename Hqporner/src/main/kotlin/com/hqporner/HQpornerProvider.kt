@@ -31,9 +31,18 @@ class HQPornerProvider : MainAPI() {
         "$mainUrl/category/ebony" to "Ebony",
         "$mainUrl/category/pov" to "POV",
         "$mainUrl/category/creampie" to "Creampie",
-        "$mainUrl/category/anal-sex-hd" to "Anal",
         "$mainUrl/category/blowjob" to "Blowjob"
+        // "Anal" removed as requested
     )
+
+    // Converts any relative URL to an absolute one.
+    private fun fixUrl(url: String): String {
+        return when {
+            url.startsWith("//") -> "https:$url"
+            url.startsWith("/") -> mainUrl + url
+            else -> url
+        }
+    }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val baseUrl = request.data
@@ -45,9 +54,9 @@ class HQPornerProvider : MainAPI() {
         val items = document.select("div.img-container")
             .mapNotNull { it.toSearchResult() }
 
+        // Check for a "next page" link (both home and category pagination)
         val hasNext = document.select("div.pagi a[href*='/hdporn/']").isNotEmpty() ||
-                document.select("div.pagi a[href*='/category/']").isNotEmpty() ||
-                items.isNotEmpty()
+                document.select("div.pagi a[href*='/category/']").isNotEmpty()
 
         return newHomePageResponse(
             list = HomePageList(name = request.name, list = items, isHorizontalImages = true),
@@ -56,17 +65,19 @@ class HQPornerProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
+        // The anchor inside .img-container holds the link and the poster image
         val link = this.selectFirst("a[href*='/hdporn/']") ?: return null
         val href = link.attr("href")
         if (href.isBlank()) return null
 
-        val titleElement = this.parent()?.selectFirst("h2") ?: return null
-        val title = titleElement.text().trim()
+        // The title is in the next sibling div (h2)
+        val titleDiv = this.nextElementSibling()
+        val titleElement = titleDiv?.selectFirst("h2")
+        val title = titleElement?.text()?.trim() ?: return null
         if (title.isBlank()) return null
 
-        val poster = link.selectFirst("img")?.attr("src")?.let {
-            if (it.startsWith("//")) "https:$it" else it
-        } ?: return null
+        // Poster image
+        val poster = link.selectFirst("img")?.attr("src")?.let { fixUrl(it) } ?: return null
 
         return newMovieSearchResponse(
             title,
@@ -109,12 +120,12 @@ class HQPornerProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Stage 1: Try CloudStream's built‑in extractor on the main video page.
+        // First try CloudStream's built‑in extractor
         if (loadExtractor(data, subtitleCallback, callback)) {
             return true
         }
 
-        // Stage 2: Manually extract iframe URL and try a custom extractor.
+        // Fetch the video page to locate the iframe
         val document = app.get(data, headers = headers).document
         val iframeSrc = document.selectFirst("div.video-container iframe")?.attr("src")
             ?: document.selectFirst("iframe[src*='mydaddy.cc']")?.attr("src")
@@ -123,9 +134,7 @@ class HQPornerProvider : MainAPI() {
             return false
         }
 
-        val fullIframeUrl = if (iframeSrc.startsWith("//")) "https:$iframeSrc" else iframeSrc
-
-        // Try custom extraction from iframe (or loadExtractor on it)
+        val fullIframeUrl = fixUrl(iframeSrc)
         return extractFromIframe(fullIframeUrl, data, subtitleCallback, callback)
     }
 
@@ -135,16 +144,16 @@ class HQPornerProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // First try loadExtractor on the iframe URL
+        // Try loadExtractor on the iframe itself
         if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
             return true
         }
 
-        // Fallback: manual parsing of the iframe content
+        // Manual fallback: scrape the iframe's content
         try {
             val page = app.get(iframeUrl, headers = headers).document
 
-            // Try to find video source in <video>, <source>, or meta tags
+            // Look for video sources
             val videoSrc = page.selectFirst("video source")?.attr("src")
                 ?: page.selectFirst("video")?.attr("src")
                 ?: page.selectFirst("source[src*='.mp4']")?.attr("src")
@@ -157,10 +166,10 @@ class HQPornerProvider : MainAPI() {
                 return true
             }
 
-            // Search in scripts for file or video_url
-            val scriptData = page.select("script").map { it.html() }.joinToString("\n")
+            // Search inside scripts for file/video_url
+            val scripts = page.select("script").joinToString("\n") { it.html() }
             val pattern = Regex("""(?:file|video_url|src)\s*[:=]\s*['"]([^'"]+\.(?:mp4|m3u8))['"]""", RegexOption.IGNORE_CASE)
-            val match = pattern.find(scriptData)
+            val match = pattern.find(scripts)
             if (match != null) {
                 val url = fixUrl(match.groupValues[1])
                 emitLink(url, referer, callback)
@@ -174,21 +183,12 @@ class HQPornerProvider : MainAPI() {
         }
     }
 
-    /**
-     * Builds and emits an ExtractorLink via the non-deprecated `newExtractorLink` builder.
-     *
-     * Note: outer values are copied into local vals (qualityValue/refererValue/headersValue)
-     * BEFORE entering the builder lambda. ExtractorLink's own `quality`/`referer`/`headers`
-     * properties have the same names, and inside a `Receiver.() -> Unit` lambda those
-     * receiver properties shadow identically-named variables from the enclosing scope, so
-     * referencing the outer values directly inside the lambda would silently read the
-     * (still-default) receiver property instead - this copy step avoids that trap.
-     */
     private suspend fun emitLink(
         url: String,
         referer: String,
         callback: (ExtractorLink) -> Unit
     ) {
+        // Copy outer values to avoid shadowing inside the builder lambda
         val qualityValue = guessQuality(url)
         val refererValue = referer
         val headersValue = headers
@@ -216,10 +216,6 @@ class HQPornerProvider : MainAPI() {
             url.contains("360") || url.contains("360p") -> 360
             else -> 0
         }
-    }
-
-    private fun fixUrl(url: String): String {
-        return if (url.startsWith("//")) "https:$url" else url
     }
 
     data class LoadUrl(
