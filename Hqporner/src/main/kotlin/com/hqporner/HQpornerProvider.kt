@@ -19,9 +19,8 @@ class HQPornerProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.NSFW)
     override val vpnStatus = VPNStatus.MightBeNeeded
 
-    private val headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-        "Referer" to mainUrl
+    private val baseHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
     )
 
     override val mainPage = mainPageOf(
@@ -32,10 +31,8 @@ class HQPornerProvider : MainAPI() {
         "$mainUrl/category/pov" to "POV",
         "$mainUrl/category/creampie" to "Creampie",
         "$mainUrl/category/blowjob" to "Blowjob"
-        // "Anal" removed as requested
     )
 
-    // Converts any relative URL to an absolute one.
     private fun fixUrl(url: String): String {
         return when {
             url.startsWith("//") -> "https:$url"
@@ -50,11 +47,10 @@ class HQPornerProvider : MainAPI() {
             if (baseUrl == mainUrl) "$mainUrl/hdporn/$page" else "$baseUrl/$page"
         }
 
-        val document = app.get(url, headers = headers).document
+        val document = app.get(url, headers = baseHeaders).document  // no special referer needed for main page
         val items = document.select("div.img-container")
             .mapNotNull { it.toSearchResult() }
 
-        // Check for a "next page" link (both home and category pagination)
         val hasNext = document.select("div.pagi a[href*='/hdporn/']").isNotEmpty() ||
                 document.select("div.pagi a[href*='/category/']").isNotEmpty()
 
@@ -65,23 +61,22 @@ class HQPornerProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        // The anchor inside .img-container holds the link and the poster image
         val link = this.selectFirst("a[href*='/hdporn/']") ?: return null
         val href = link.attr("href")
         if (href.isBlank()) return null
 
-        // The title is in the next sibling div (h2)
         val titleDiv = this.nextElementSibling()
         val titleElement = titleDiv?.selectFirst("h2")
         val title = titleElement?.text()?.trim() ?: return null
         if (title.isBlank()) return null
 
-        // Poster image
         val poster = link.selectFirst("img")?.attr("src")?.let { fixUrl(it) } ?: return null
 
+        // Store both href and poster inside the load data JSON
+        val loadData = LoadUrl(fixUrl(href), poster).toJson()
         return newMovieSearchResponse(
             title,
-            LoadUrl(fixUrl(href), poster).toJson(),
+            loadData,  // JSON string
             TvType.NSFW
         ) {
             this.posterUrl = poster
@@ -91,7 +86,7 @@ class HQPornerProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         for (page in 1..3) {
-            val document = app.get("$mainUrl/?q=$query&p=$page", headers = headers).document
+            val document = app.get("$mainUrl/?q=$query&p=$page", headers = baseHeaders).document
             val items = document.select("div.img-container")
                 .mapNotNull { it.toSearchResult() }
             results.addAll(items)
@@ -102,7 +97,7 @@ class HQPornerProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val loadData = tryParseJson<LoadUrl>(url) ?: return null
-        val document = app.get(loadData.href, headers = headers).document
+        val document = app.get(loadData.href, headers = baseHeaders).document
 
         val title = document.selectFirst("h1")?.text()?.trim() ?: loadData.title ?: "Unknown"
         val poster = loadData.posterUrl
@@ -120,22 +115,33 @@ class HQPornerProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // First try CloudStream's built‑in extractor
-        if (loadExtractor(data, subtitleCallback, callback)) {
+        // data might be the JSON we stored (LoadUrl) or a plain URL as fallback
+        val loadData = tryParseJson<LoadUrl>(data)
+        val videoPageUrl = loadData?.href ?: data   // real page URL
+
+        // First try CloudStream's built-in extractor on the page itself
+        if (loadExtractor(videoPageUrl, subtitleCallback, callback)) {
             return true
         }
 
         // Fetch the video page to locate the iframe
-        val document = app.get(data, headers = headers).document
+        // Use headers with referer set to mainUrl (the page expects referer from the same domain usually)
+        val pageHeaders = baseHeaders.toMutableMap().apply {
+            put("Referer", mainUrl)
+        }
+        val document = app.get(videoPageUrl, headers = pageHeaders).document
+
+        // Find the iframe source – try common selectors
         val iframeSrc = document.selectFirst("div.video-container iframe")?.attr("src")
             ?: document.selectFirst("iframe[src*='mydaddy.cc']")?.attr("src")
+            ?: document.selectFirst("iframe[src]")?.attr("src")  // last resort
 
         if (iframeSrc.isNullOrBlank()) {
             return false
         }
 
         val fullIframeUrl = fixUrl(iframeSrc)
-        return extractFromIframe(fullIframeUrl, data, subtitleCallback, callback)
+        return extractFromIframe(fullIframeUrl, videoPageUrl, subtitleCallback, callback)
     }
 
     private suspend fun extractFromIframe(
@@ -144,35 +150,62 @@ class HQPornerProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Try loadExtractor on the iframe itself
+        // Use a referer that matches the video page for the iframe request
+        val iframeHeaders = baseHeaders.toMutableMap().apply {
+            put("Referer", referer)
+        }
+
+        // Try loadExtractor again with the iframe URL
         if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
             return true
         }
 
-        // Manual fallback: scrape the iframe's content
         try {
-            val page = app.get(iframeUrl, headers = headers).document
+            val page = app.get(iframeUrl, headers = iframeHeaders).document
 
-            // Look for video sources
-            val videoSrc = page.selectFirst("video source")?.attr("src")
-                ?: page.selectFirst("video")?.attr("src")
-                ?: page.selectFirst("source[src*='.mp4']")?.attr("src")
-                ?: page.selectFirst("source[src*='.m3u8']")?.attr("src")
-                ?: page.selectFirst("meta[property='og:video']")?.attr("content")
+            // 1. Standard HTML5 video sources
+            val sources = page.select("video source")
+            if (sources.isNotEmpty()) {
+                val best = sources.maxByOrNull { s ->
+                    val label = s.attr("label") ?: s.attr("title") ?: ""
+                    guessQualityFromLabel(label)
+                } ?: sources.first()
+                val src = best.attr("src")
+                if (src.isNotBlank()) {
+                    emitLink(fixUrl(src), referer, callback, guessQualityFromLabel(best.attr("label")))
+                    return true
+                }
+            }
 
+            // 2. Direct video src attribute
+            val videoSrc = page.selectFirst("video[src]")?.attr("src")
             if (!videoSrc.isNullOrBlank()) {
-                val url = fixUrl(videoSrc)
-                emitLink(url, referer, callback)
+                emitLink(fixUrl(videoSrc), referer, callback)
                 return true
             }
 
-            // Search inside scripts for file/video_url
-            val scripts = page.select("script").joinToString("\n") { it.html() }
-            val pattern = Regex("""(?:file|video_url|src)\s*[:=]\s*['"]([^'"]+\.(?:mp4|m3u8))['"]""", RegexOption.IGNORE_CASE)
-            val match = pattern.find(scripts)
+            // 3. meta og:video
+            val metaVideo = page.selectFirst("meta[property='og:video']")?.attr("content")
+            if (!metaVideo.isNullOrBlank()) {
+                emitLink(fixUrl(metaVideo), referer, callback)
+                return true
+            }
+
+            // 4. Look inside <script> text for URLs ending with .mp4 or .m3u8
+            val scriptText = page.select("script").joinToString("\n") { it.html() }
+            // more flexible pattern: capture any quoted URL with common video extensions
+            val videoUrlPattern = Regex("""['"](https?://[^"']+?\.(?:mp4|m3u8)[^"']*?)['"]""", RegexOption.IGNORE_CASE)
+            val match = videoUrlPattern.find(scriptText)
             if (match != null) {
-                val url = fixUrl(match.groupValues[1])
-                emitLink(url, referer, callback)
+                emitLink(fixUrl(match.groupValues[1]), referer, callback)
+                return true
+            }
+
+            // 5. Try to parse JSON-like structures
+            val jsonPattern = Regex("""["'](?:file|video_url|src)["']\s*:\s*["']([^"']+\.(?:mp4|m3u8))["']""", RegexOption.IGNORE_CASE)
+            val jsonMatch = jsonPattern.find(scriptText)
+            if (jsonMatch != null) {
+                emitLink(fixUrl(jsonMatch.groupValues[1]), referer, callback)
                 return true
             }
 
@@ -186,35 +219,47 @@ class HQPornerProvider : MainAPI() {
     private suspend fun emitLink(
         url: String,
         referer: String,
-        callback: (ExtractorLink) -> Unit
+        callback: (ExtractorLink) -> Unit,
+        quality: Int? = null
     ) {
-        // Copy outer values to avoid shadowing inside the builder lambda
-        val qualityValue = guessQuality(url)
-        val refererValue = referer
-        val headersValue = headers
-        val linkType = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+        val qualityValue = quality ?: guessQuality(url)
+        val linkType = if (url.contains(".m3u8", ignoreCase = true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+        // Build headers without Referer (the referer property is set separately)
+        val headers = baseHeaders.toMutableMap().apply {
+            remove("Referer") // avoid conflict with the dedicated referer field
+        }
 
         callback.invoke(
             newExtractorLink(
                 source = "HQPorner",
-                name = "HQPorner ${qualityValue}p",
+                name = "HQPorner ${if (qualityValue > 0) qualityValue.toString() + "p" else "Stream"}",
                 url = url,
                 type = linkType
             ) {
-                this.referer = refererValue
+                this.referer = referer
                 this.quality = qualityValue
-                this.headers = headersValue
+                this.headers = headers
             }
         )
     }
 
     private fun guessQuality(url: String): Int {
         return when {
-            url.contains("1080") || url.contains("1080p") -> 1080
-            url.contains("720") || url.contains("720p") -> 720
-            url.contains("480") || url.contains("480p") -> 480
-            url.contains("360") || url.contains("360p") -> 360
-            else -> 0
+            url.contains("1080", ignoreCase = true) -> 1080
+            url.contains("720", ignoreCase = true) -> 720
+            url.contains("480", ignoreCase = true) -> 480
+            url.contains("360", ignoreCase = true) -> 360
+            else -> Qualities.Unknown.value
+        }
+    }
+
+    private fun guessQualityFromLabel(label: String): Int {
+        return when {
+            label.contains("1080") -> 1080
+            label.contains("720") -> 720
+            label.contains("480") -> 480
+            label.contains("360") -> 360
+            else -> Qualities.Unknown.value
         }
     }
 
