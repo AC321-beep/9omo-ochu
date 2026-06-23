@@ -1,13 +1,13 @@
 package com.hqporner
 
-import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
-import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.SubtitleFile
+import org.jsoup.nodes.Element
 
 class HQPornerProvider : MainAPI() {
-    override var mainUrl = "https://hqporner.com"
+    override var mainUrl = "https://m.hqporner.com"
     override var name = "HQPorner"
     override val hasMainPage = true
     override var lang = "en"
@@ -16,17 +16,19 @@ class HQPornerProvider : MainAPI() {
     override val vpnStatus = VPNStatus.MightBeNeeded
 
     private val headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
         "Referer" to mainUrl
     )
 
     override val mainPage = mainPageOf(
         mainUrl to "Recent",
-        "$mainUrl/category/creampie" to "Creampie",
         "$mainUrl/category/milf" to "Milf",
         "$mainUrl/category/teen-porn" to "Teen",
         "$mainUrl/category/ebony" to "Ebony",
-        "$mainUrl/category/pov" to "POV"
+        "$mainUrl/category/pov" to "POV",
+        "$mainUrl/category/creampie" to "Creampie",
+        "$mainUrl/category/anal-sex-hd" to "Anal",
+        "$mainUrl/category/blowjob" to "Blowjob"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -36,13 +38,12 @@ class HQPornerProvider : MainAPI() {
         }
 
         val document = app.get(url, headers = headers).document
-        val items = document.select("section.box.features div.6u section.box.feature")
+        val items = document.select("div.img-container")
             .mapNotNull { it.toSearchResult() }
 
-        val hasNext = document.select("ul.actions.pagination a[href*='/hdporn/']").size > 0 ||
-                document.select("ul.actions.pagination a[href*='/category/']").size > 0 ||
-                document.select("a.next").size > 0 ||
-                (items.size > 0 && page < 10)
+        val hasNext = document.select("div.pagi a[href*='/hdporn/']").isNotEmpty() ||
+                document.select("div.pagi a[href*='/category/']").isNotEmpty() ||
+                items.isNotEmpty()
 
         return newHomePageResponse(
             list = HomePageList(name = request.name, list = items, isHorizontalImages = true),
@@ -55,38 +56,31 @@ class HQPornerProvider : MainAPI() {
         val href = link.attr("href")
         if (href.isBlank()) return null
 
-        var title = this.selectFirst("h3.meta-data-title a")?.text()?.trim()
-        if (title.isNullOrBlank()) title = link.attr("title").trim()
-        if (title.isNullOrBlank()) title = link.text().trim()
-        if (title.isNullOrBlank()) title = "No Title"
+        val titleElement = this.parent()?.selectFirst("h2") ?: return null
+        val title = titleElement.text().trim()
+        if (title.isBlank()) return null
 
-        val formattedTitle = title.split(" ")
-            .joinToString(" ") { it.replaceFirstChar { char -> char.uppercase() } }
+        val poster = link.selectFirst("img")?.attr("src")?.let {
+            if (it.startsWith("//")) "https:$it" else it
+        } ?: return null
 
-        var poster: String? = link.selectFirst("img")?.attr("src")
-        if (poster.isNullOrBlank()) poster = link.selectFirst("img")?.attr("data-src")
-        if (poster.isNullOrBlank()) {
-            poster = this.selectFirst("img")?.attr("src")
-        }
-        if (!poster.isNullOrBlank() && poster.startsWith("//")) {
-            poster = "https:$poster"
-        }
-        poster = fixUrlNull(poster)
+        val duration = this.parent()?.selectFirst("span.meta_data i.fa-clock-o")?.parent()?.text()?.trim() ?: ""
 
         return newMovieSearchResponse(
-            formattedTitle,
-            LoadUrl(fixUrl(href), poster).toJson(),
+            title,
+            LoadUrl(fixUrl(href), poster, duration).toJson(),
             TvType.NSFW
         ) {
             this.posterUrl = poster
+            this.plot = duration
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
-        for (page in 1..2) {
+        for (page in 1..3) {
             val document = app.get("$mainUrl/?q=$query&p=$page", headers = headers).document
-            val items = document.select("section.box.features div.6u section.box.feature")
+            val items = document.select("div.img-container")
                 .mapNotNull { it.toSearchResult() }
             results.addAll(items)
             if (items.isEmpty()) break
@@ -98,24 +92,13 @@ class HQPornerProvider : MainAPI() {
         val loadData = tryParseJson<LoadUrl>(url) ?: return null
         val document = app.get(loadData.href, headers = headers).document
 
-        var title = document.selectFirst("header > h1")?.text()?.trim()
-        if (title.isNullOrBlank()) title = document.selectFirst("h1.title")?.text()?.trim()
-        if (title.isNullOrBlank()) title = document.selectFirst("meta[property='og:title']")?.attr("content")?.trim()
-        if (title.isNullOrBlank()) title = "Unknown"
+        val title = document.selectFirst("h1")?.text()?.trim() ?: loadData.title
+        val poster = loadData.posterUrl
+        val description = document.selectFirst("meta[name='description']")?.attr("content") ?: ""
 
-        val formattedTitle = title.split(" ")
-            .joinToString(" ") { it.replaceFirstChar { char -> char.uppercase() } }
-
-        var poster = document.selectFirst("meta[property='og:image']")?.attr("content")
-        if (poster.isNullOrBlank()) poster = loadData.posterUrl
-        poster = fixUrlNull(poster)
-
-        val plot = document.select("div.description p").text()
-            .ifEmpty { document.select("meta[name='description']")?.attr("content").orEmpty() }
-
-        return newMovieLoadResponse(formattedTitle, url, TvType.NSFW, loadData.href) {
+        return newMovieLoadResponse(title, url, TvType.NSFW, loadData.href) {
             this.posterUrl = poster
-            this.plot = plot
+            this.plot = description
         }
     }
 
@@ -125,91 +108,131 @@ class HQPornerProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data, headers = headers).document
+        val doc = app.get(data, headers = headers).document
 
-        // 1. Try the worker API
-        val iframe = document.selectFirst("iframe[src*='mydaddy.cc']")
-            ?: document.selectFirst("iframe[src*='/video/']")
-            ?: document.selectFirst("iframe[src*='embed']")
+        // 1. Find the main iframe (mydaddy.cc)
+        var iframeSrc = doc.selectFirst("div.video-container iframe")?.attr("src")
+            ?: doc.selectFirst("iframe[src*='mydaddy.cc']")?.attr("src")
 
-        if (iframe != null) {
-            val iframeSrc = iframe.attr("src")
-            val videoId = Regex("""/video/([^/]+)/""").find(iframeSrc)?.groupValues?.get(1)
-            if (!videoId.isNullOrBlank()) {
-                try {
-                    val configUrl = "https://vidfast.yogeshkumarjamre1.workers.dev/route-config"
-                    val configResponse = app.get(configUrl, headers = headers)
-                    val configJson = tryParseJson<Map<String, Any>>(configResponse.text)
-                    val csrfToken = configJson?.get("csrf_token")?.toString() ?: ""
+        if (iframeSrc.isNullOrBlank()) {
+            return tryAltPlayerFallback(doc, callback)
+        }
 
-                    val workerHeaders = mapOf(
-                        "User-Agent" to headers["User-Agent"].orEmpty(),
-                        "Referer" to "https://vidfast.pro/",
-                        "X-CSRF-Token" to csrfToken,
-                        "X-Requested-With" to "XMLHttpRequest",
-                        "Content-Type" to "application/json"
-                    )
+        if (iframeSrc.startsWith("//")) iframeSrc = "https:$iframeSrc"
 
-                    val generatePayload = mapOf("siteData" to videoId)
-                    val generateResponse = app.post(
-                        "https://vidfast.yogeshkumarjamre1.workers.dev/generate",
-                        data = generatePayload,
-                        headers = workerHeaders
-                    )
-                    val generateText = generateResponse.text
-                    val generateJson = tryParseJson<Map<String, Any>>(generateText)
-                    val payload = generateJson?.get("data")?.toString()
+        // 2. Extract video ID for altplayer fallback
+        val videoId = Regex("""/video/([^/]+)/""").find(iframeSrc)?.groupValues?.get(1)
 
-                    if (!payload.isNullOrBlank()) {
-                        val decryptPayload = mapOf("response" to payload)
-                        val decryptResponse = app.post(
-                            "https://vidfast.yogeshkumarjamre1.workers.dev/decrypt",
-                            data = decryptPayload,
-                            headers = workerHeaders
-                        )
-                        val decryptText = decryptResponse.text
-                        val decryptJson = tryParseJson<Map<String, Any>>(decryptText)
-                        val videoUrl = decryptJson?.get("data")?.toString()
+        // 3. Try main iframe first
+        val success = extractVideoFromIframe(iframeSrc, callback)
+        if (success) return true
 
-                        if (!videoUrl.isNullOrBlank() && (videoUrl.contains(".mp4") || videoUrl.contains(".m3u8"))) {
-                            return loadExtractor(videoUrl, subtitleCallback, callback)
-                        }
-                    }
-                } catch (e: Exception) {
-                    // fall through
-                }
+        // 4. If main fails and we have an ID, try the alternative player
+        if (!videoId.isNullOrBlank()) {
+            val altUrl = "$mainUrl/blocks/altplayer.php?i=//mydaddy.cc/video/$videoId/"
+            val altSuccess = extractVideoFromIframe(altUrl, callback)
+            if (altSuccess) return true
+        }
+
+        // 5. Last resort: try any other mydaddy.cc iframe on the page
+        return tryAltPlayerFallback(doc, callback)
+    }
+
+    private suspend fun tryAltPlayerFallback(doc: Element, callback: (ExtractorLink) -> Unit): Boolean {
+        val iframes = doc.select("iframe[src*='mydaddy.cc']")
+        for (iframe in iframes) {
+            val src = iframe.attr("src")
+            if (src.isNotBlank()) {
+                val fullSrc = if (src.startsWith("//")) "https:$src" else src
+                val success = extractVideoFromIframe(fullSrc, callback)
+                if (success) return true
             }
         }
-
-        // 2. Fallback to altplayer regex
-        val docHtml = document.toString()
-        val rawUrl = Regex("""url: '/blocks/altplayer\.php\?i=//(.*?)',""").find(docHtml)?.groupValues?.get(1)
-        if (!rawUrl.isNullOrBlank()) {
-            val href = "https://$rawUrl"
-            return loadExtractor(href, subtitleCallback, callback)
-        }
-
-        // 3. Direct mp4/m3u8
-        val directUrl = Regex("""(https?://[^\s"']+\.(mp4|m3u8))""").find(docHtml)?.groupValues?.get(1)
-        if (!directUrl.isNullOrBlank()) {
-            return loadExtractor(directUrl, subtitleCallback, callback)
-        }
-
         return false
+    }
+
+    private suspend fun extractVideoFromIframe(
+        iframeUrl: String,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        try {
+            val page = app.get(iframeUrl, headers = headers).document
+
+            // Look for video in <video> or <source> tags
+            val videoSrc = page.selectFirst("video source")?.attr("src")
+                ?: page.selectFirst("video")?.attr("src")
+                ?: page.selectFirst("source[src*='.mp4']")?.attr("src")
+                ?: page.selectFirst("source[src*='.m3u8']")?.attr("src")
+                ?: page.selectFirst("meta[property='og:video']")?.attr("content")
+
+            if (!videoSrc.isNullOrBlank()) {
+                val url = fixUrl(videoSrc)
+                val quality = guessQuality(url)
+                callback.invoke(
+                    ExtractorLink(
+                        source = "HQPorner",
+                        url = url,
+                        name = "HQPorner ${quality}p",
+                        quality = quality,
+                        isM3u8 = url.contains(".m3u8"),
+                        referer = iframeUrl,
+                        headers = headers
+                    )
+                )
+                return true
+            }
+
+            // Search in scripts for file or video_url
+            val scriptData = page.select("script").map { it.html() }.joinToString("\n")
+            val patterns = listOf(
+                Regex("""(?:file|video_url|src)\s*[:=]\s*['"]([^'"]+\.(?:mp4|m3u8))['"]""", RegexOption.IGNORE_CASE),
+                Regex("""https?://[^\s'"]+\.(mp4|m3u8)""")
+            )
+
+            for (pattern in patterns) {
+                val match = pattern.find(scriptData)
+                if (match != null) {
+                    val url = fixUrl(match.groupValues[1])
+                    val quality = guessQuality(url)
+                    callback.invoke(
+                        ExtractorLink(
+                            source = "HQPorner",
+                            url = url,
+                            name = "HQPorner ${quality}p",
+                            quality = quality,
+                            isM3u8 = url.contains(".m3u8"),
+                            referer = iframeUrl,
+                            headers = headers
+                        )
+                    )
+                    return true
+                }
+            }
+
+            return false
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return false
+        }
     }
 
     private fun guessQuality(url: String): Int {
         return when {
-            url.contains("1080") -> 1080
-            url.contains("720") -> 720
-            url.contains("480") -> 480
-            url.contains("360") -> 360
+            url.contains("1080") || url.contains("1080p") -> 1080
+            url.contains("720") || url.contains("720p") -> 720
+            url.contains("480") || url.contains("480p") -> 480
+            url.contains("360") || url.contains("360p") -> 360
             else -> 0
         }
     }
 
+    private fun fixUrl(url: String): String {
+        return if (url.startsWith("//")) "https:$url" else url
+    }
+
     data class LoadUrl(
         val href: String,
-        val posterUrl: String?
+        val posterUrl: String? = null,
+        val title: String? = null
     )
 }
