@@ -1,6 +1,7 @@
 package com.hqporner
 
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -102,7 +103,7 @@ class HQPornerProvider : MainAPI() {
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
-        subtitleCallback: (com.lagradost.cloudstream3.utils.SubtitleFile) -> Unit,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val doc = app.get(data, headers = headers).document
