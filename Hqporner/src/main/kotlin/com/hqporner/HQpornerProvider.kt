@@ -116,6 +116,7 @@ class HQPornerProvider : MainAPI() {
         }
     }
 
+    // ---------- IMPROVED loadLinks ----------
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -124,59 +125,54 @@ class HQPornerProvider : MainAPI() {
     ): Boolean {
         val document = app.get(data, headers = headers).document
 
-        // ----- Stage 1: Try loadExtractor on the main page -----
-        if (loadExtractor(data, subtitleCallback, callback)) {
-            return true
-        }
-
-        // ----- Stage 2: Extract iframe and parse its content -----
+        // ----- 1. Try to extract video ID from iframe and fetch altplayer/nativeplayer -----
         val iframe = document.selectFirst("iframe[src*='mydaddy.cc']")
             ?: document.selectFirst("iframe[src*='/video/']")
             ?: document.selectFirst("iframe[src*='embed']")
 
         if (iframe != null) {
-            var iframeSrc = iframe.attr("src")
-            if (iframeSrc.startsWith("//")) iframeSrc = "https:$iframeSrc"
-            if (iframeSrc.isNotBlank()) {
-                val iframeDoc = app.get(iframeSrc, headers = headers).document
-                val iframeHtml = iframeDoc.toString()
-
-                var videoUrl: String? = null
-
-                // 2a: <video> or <source> tags
-                videoUrl = iframeDoc.selectFirst("video source")?.attr("src")
+            val iframeSrc = iframe.attr("src")
+            val videoId = Regex("""/video/([^/]+)/""").find(iframeSrc)?.groupValues?.get(1)
+            if (!videoId.isNullOrBlank()) {
+                // Try altplayer
+                val altUrl = "$mainUrl/blocks/altplayer.php?i=//mydaddy.cc/video/$videoId/"
+                val altDoc = app.get(altUrl, headers = headers).document
+                var videoUrl = altDoc.selectFirst("video source")?.attr("src")
                 if (videoUrl.isNullOrBlank()) {
-                    videoUrl = iframeDoc.selectFirst("video")?.attr("src")
+                    videoUrl = altDoc.selectFirst("video")?.attr("src")
                 }
-
-                // 2b: JSON config inside scripts
-                if (videoUrl.isNullOrBlank()) {
-                    val patterns = listOf(
-                        Regex("""["'](?:file|src|url|source|video|manifest|playlist)["']\s*:\s*["'](https?://[^"']+\.(m3u8|mp4))["']"""),
-                        Regex("""["'](?:file|src|url|source|video|manifest|playlist)["']\s*:\s*["'](//[^"']+\.(m3u8|mp4))["']""")
-                    )
-                    for (pattern in patterns) {
-                        val match = pattern.find(iframeHtml)
-                        if (match != null) {
-                            videoUrl = match.groupValues[1]
-                            if (!videoUrl.startsWith("http")) {
-                                videoUrl = "https:$videoUrl"
-                            }
-                            break
-                        }
-                    }
-                }
-
                 if (!videoUrl.isNullOrBlank()) {
                     return loadExtractor(videoUrl, subtitleCallback, callback)
                 }
 
-                // 2c: If nothing found, try loadExtractor on the iframe URL itself
-                return loadExtractor(iframeSrc, subtitleCallback, callback)
+                // Try nativeplayer
+                val nativeUrl = "$mainUrl/blocks/nativeplayer.php?i=//mydaddy.cc/video/$videoId/"
+                val nativeDoc = app.get(nativeUrl, headers = headers).document
+                videoUrl = nativeDoc.selectFirst("video source")?.attr("src")
+                if (videoUrl.isNullOrBlank()) {
+                    videoUrl = nativeDoc.selectFirst("video")?.attr("src")
+                }
+                if (!videoUrl.isNullOrBlank()) {
+                    return loadExtractor(videoUrl, subtitleCallback, callback)
+                }
+            }
+
+            // If altplayer/nativeplayer didn't work, try loading the iframe itself
+            var iframeSrcFull = iframeSrc
+            if (iframeSrcFull.startsWith("//")) iframeSrcFull = "https:$iframeSrcFull"
+            if (iframeSrcFull.isNotBlank()) {
+                val iframeDoc = app.get(iframeSrcFull, headers = headers).document
+                var videoUrl = iframeDoc.selectFirst("video source")?.attr("src")
+                if (videoUrl.isNullOrBlank()) {
+                    videoUrl = iframeDoc.selectFirst("video")?.attr("src")
+                }
+                if (!videoUrl.isNullOrBlank()) {
+                    return loadExtractor(videoUrl, subtitleCallback, callback)
+                }
             }
         }
 
-        // ----- Stage 3: altplayer regex -----
+        // ----- 2. Fallback to altplayer regex from original code -----
         val docHtml = document.toString()
         val rawUrl = Regex("""url: '/blocks/altplayer\.php\?i=//(.*?)',""").find(docHtml)?.groupValues?.get(1)
         if (!rawUrl.isNullOrBlank()) {
@@ -184,7 +180,7 @@ class HQPornerProvider : MainAPI() {
             return loadExtractor(href, subtitleCallback, callback)
         }
 
-        // ----- Stage 4: Direct mp4/m3u8 in main page -----
+        // ----- 3. Final fallback: direct mp4/m3u8 in the page -----
         val directUrl = Regex("""(https?://[^\s"']+\.(mp4|m3u8))""").find(docHtml)?.groupValues?.get(1)
         if (!directUrl.isNullOrBlank()) {
             return loadExtractor(directUrl, subtitleCallback, callback)
