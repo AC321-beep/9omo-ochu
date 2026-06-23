@@ -17,6 +17,8 @@ class HQPornerProvider : MainAPI() {
 
     private val headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language" to "en-US,en;q=0.5",
         "Referer" to mainUrl
     )
 
@@ -63,7 +65,6 @@ class HQPornerProvider : MainAPI() {
         val formattedTitle = title.split(" ")
             .joinToString(" ") { it.replaceFirstChar { char -> char.uppercase() } }
 
-        // Poster extraction: use the image inside the container
         var poster: String? = link.selectFirst("img")?.attr("src")
         if (poster.isNullOrBlank()) poster = link.selectFirst("img")?.attr("data-src")
         if (poster.isNullOrBlank()) {
@@ -107,7 +108,6 @@ class HQPornerProvider : MainAPI() {
         val formattedTitle = title.split(" ")
             .joinToString(" ") { it.replaceFirstChar { char -> char.uppercase() } }
 
-        // Poster: prefer og:image on the video page
         var poster = document.selectFirst("meta[property='og:image']")?.attr("content")
         if (poster.isNullOrBlank()) poster = loadData.posterUrl
         poster = fixUrlNull(poster)
@@ -121,7 +121,6 @@ class HQPornerProvider : MainAPI() {
         }
     }
 
-    // ---------- IMPROVED loadLinks with worker integration ----------
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -130,77 +129,92 @@ class HQPornerProvider : MainAPI() {
     ): Boolean {
         val document = app.get(data, headers = headers).document
 
-        // ----- 1. Try the worker API -----
+        // Find the iframe (mydaddy.cc or similar)
         val iframe = document.selectFirst("iframe[src*='mydaddy.cc']")
             ?: document.selectFirst("iframe[src*='/video/']")
             ?: document.selectFirst("iframe[src*='embed']")
 
-        if (iframe != null) {
-            val iframeSrc = iframe.attr("src")
-            val videoId = Regex("""/video/([^/]+)/""").find(iframeSrc)?.groupValues?.get(1)
-            if (!videoId.isNullOrBlank()) {
-                try {
-                    // Get worker config
-                    val configUrl = "https://vidfast.yogeshkumarjamre1.workers.dev/route-config"
-                    val configResponse = app.get(configUrl, headers = headers)
-                    val configJson = tryParseJson<Map<String, Any>>(configResponse.text)
-                    val csrfToken = configJson?.get("csrf_token")?.toString() ?: ""
-
-                    val workerHeaders = mapOf(
-                        "User-Agent" to headers["User-Agent"].orEmpty(),
-                        "Referer" to "https://vidfast.pro/",
-                        "X-CSRF-Token" to csrfToken,
-                        "X-Requested-With" to "XMLHttpRequest",
-                        "Content-Type" to "application/json"
-                    )
-
-                    // Generate payload
-                    val generatePayload = mapOf("siteData" to videoId)
-                    val generateResponse = app.post(
-                        "https://vidfast.yogeshkumarjamre1.workers.dev/generate",
-                        data = generatePayload,
-                        headers = workerHeaders
-                    )
-                    val generateText = generateResponse.text
-                    val generateJson = tryParseJson<Map<String, Any>>(generateText)
-                    val payload = generateJson?.get("data")?.toString()
-
-                    if (!payload.isNullOrBlank()) {
-                        // Decrypt the payload
-                        val decryptPayload = mapOf("response" to payload)
-                        val decryptResponse = app.post(
-                            "https://vidfast.yogeshkumarjamre1.workers.dev/decrypt",
-                            data = decryptPayload,
-                            headers = workerHeaders
-                        )
-                        val decryptText = decryptResponse.text
-                        val decryptJson = tryParseJson<Map<String, Any>>(decryptText)
-                        val videoUrl = decryptJson?.get("data")?.toString()
-
-                        if (!videoUrl.isNullOrBlank() && (videoUrl.contains(".mp4") || videoUrl.contains(".m3u8"))) {
-                            return loadExtractor(videoUrl, subtitleCallback, callback)
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Worker failed, fallback to other methods
-                }
+        if (iframe == null) {
+            // Fallback: look for altplayer regex
+            val docHtml = document.toString()
+            val rawUrl = Regex("""url: '/blocks/altplayer\.php\?i=//(.*?)',""").find(docHtml)?.groupValues?.get(1)
+            if (!rawUrl.isNullOrBlank()) {
+                val href = "https://$rawUrl"
+                return loadExtractor(href, subtitleCallback, callback)
             }
+            return false
         }
 
-        // ----- 2. Existing fallback methods (altplayer, direct links) -----
-        val docHtml = document.toString()
-        val rawUrl = Regex("""url: '/blocks/altplayer\.php\?i=//(.*?)',""").find(docHtml)?.groupValues?.get(1)
-        if (!rawUrl.isNullOrBlank()) {
-            val href = "https://$rawUrl"
-            return loadExtractor(href, subtitleCallback, callback)
+        // Extract the iframe source URL
+        var iframeSrc = iframe.attr("src")
+        if (iframeSrc.startsWith("//")) iframeSrc = "https:$iframeSrc"
+        if (iframeSrc.isBlank()) return false
+
+        // Fetch the iframe page with proper headers
+        val iframeHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Referer" to mainUrl
+        )
+
+        val iframeDoc = app.get(iframeSrc, headers = iframeHeaders).document
+        val iframeHtml = iframeDoc.toString()
+
+        // Search for MP4 URLs (the bash script uses `grep -Eo '//[a-zA-Z0-9?%-_]*.mp4'`)
+        // So we match patterns like //cdn...mp4 and convert to https://
+        val mp4Pattern = Regex("""//([a-zA-Z0-9?%-_/]+\.mp4)""")
+        val mp4Urls = mp4Pattern.findAll(iframeHtml)
+            .map { match -> "https://${match.groupValues[1]}" }
+            .distinct()
+            .toList()
+
+        if (mp4Urls.isNotEmpty()) {
+            // Add each quality as a separate ExtractorLink
+            // We can guess quality from the filename (e.g., 1080p.mp4)
+            mp4Urls.forEach { url ->
+                val quality = guessQuality(url)
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = url,
+                        type = INFER_TYPE
+                    ) {
+                        this.referer = mainUrl
+                        this.quality = quality
+                        this.headers = mapOf("Referer" to mainUrl)
+                    }
+                )
+            }
+            return true
         }
 
-        val directUrl = Regex("""(https?://[^\s"']+\.(mp4|m3u8))""").find(docHtml)?.groupValues?.get(1)
-        if (!directUrl.isNullOrBlank()) {
-            return loadExtractor(directUrl, subtitleCallback, callback)
+        // If no MP4 found, try to find M3U8 links
+        val m3u8Pattern = Regex("""//([a-zA-Z0-9?%-_/]+\.m3u8)""")
+        val m3u8Urls = m3u8Pattern.findAll(iframeHtml)
+            .map { match -> "https://${match.groupValues[1]}" }
+            .distinct()
+            .toList()
+
+        if (m3u8Urls.isNotEmpty()) {
+            m3u8Urls.forEach { url ->
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = url,
+                        type = M3U8
+                    ) {
+                        this.referer = mainUrl
+                        this.headers = mapOf("Referer" to mainUrl)
+                    }
+                )
+            }
+            return true
         }
 
-        return false
+        // Fallback: try loadExtractor on the iframe URL
+        return loadExtractor(iframeSrc, subtitleCallback, callback)
     }
 
     private fun guessQuality(url: String): Int {
