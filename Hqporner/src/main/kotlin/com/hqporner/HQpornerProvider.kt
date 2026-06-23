@@ -46,12 +46,11 @@ class HQPornerProvider : MainAPI() {
         val url = if (page == 1) baseUrl else {
             if (baseUrl == mainUrl) "$mainUrl/hdporn/$page" else "$baseUrl/$page"
         }
-        // document is nullable – safe call with ?.let
-        val items = app.get(url, headers = baseHeaders).document?.select("div.img-container")
-            ?.mapNotNull { it.toSearchResult() } ?: emptyList()
-        val hasNext = app.get(url, headers = baseHeaders).document?.let { doc ->
+        val document = app.get(url, headers = baseHeaders).document
+        val items = document?.select("div.img-container")?.mapNotNull { it.toSearchResult() } ?: emptyList()
+        val hasNext = document?.let { doc ->
             doc.select("div.pagi a[href*='/hdporn/']").isNotEmpty() ||
-            doc.select("div.pagi a[href*='/category/']").isNotEmpty()
+                    doc.select("div.pagi a[href*='/category/']").isNotEmpty()
         } ?: false
         return newHomePageResponse(
             list = HomePageList(name = request.name, list = items, isHorizontalImages = true),
@@ -114,7 +113,7 @@ class HQPornerProvider : MainAPI() {
         val pageHeaders = baseHeaders.toMutableMap().apply { put("Referer", mainUrl) }
         val document = app.get(videoPageUrl, headers = pageHeaders).document ?: return false
 
-        // 2. Look for the usual iframe
+        // 2. Look for the usual iframe (all selectFirst calls are safe-chained with ?.)
         val iframeSrc = document.selectFirst("div.video-container iframe")?.attr("src")
             ?: document.selectFirst("iframe[src*='mydaddy.cc']")?.attr("src")
             ?: document.selectFirst("iframe[src]")?.attr("src")
