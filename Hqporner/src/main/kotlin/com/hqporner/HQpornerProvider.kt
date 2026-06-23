@@ -66,6 +66,7 @@ class HQPornerProvider : MainAPI() {
             if (it.startsWith("//")) "https:$it" else it
         } ?: return null
 
+        // We store duration in the data object for later use
         val duration = this.parent()?.selectFirst("span.meta_data i.fa-clock-o")?.parent()?.text()?.trim() ?: ""
 
         return newMovieSearchResponse(
@@ -74,7 +75,8 @@ class HQPornerProvider : MainAPI() {
             TvType.NSFW
         ) {
             this.posterUrl = poster
-            this.plot = duration
+            // Do NOT set plot here – it is not a member of MovieSearchResponse
+            // Store duration in the data object above
         }
     }
 
@@ -172,13 +174,13 @@ class HQPornerProvider : MainAPI() {
                 val quality = guessQuality(url)
                 callback.invoke(
                     newExtractorLink(
-                        source = "HQPorner",
-                        name = "HQPorner ${quality}p",
-                        url = url,
-                        quality = quality,
-                        isM3u8 = url.contains(".m3u8"),
-                        referer = iframeUrl,
-                        headers = headers
+                        "HQPorner",
+                        "HQPorner ${quality}p",
+                        url,
+                        quality,
+                        url.contains(".m3u8"),
+                        iframeUrl,
+                        headers
                     )
                 )
                 return true
@@ -198,13 +200,13 @@ class HQPornerProvider : MainAPI() {
                     val quality = guessQuality(url)
                     callback.invoke(
                         newExtractorLink(
-                            source = "HQPorner",
-                            name = "HQPorner ${quality}p",
-                            url = url,
-                            quality = quality,
-                            isM3u8 = url.contains(".m3u8"),
-                            referer = iframeUrl,
-                            headers = headers
+                            "HQPorner",
+                            "HQPorner ${quality}p",
+                            url,
+                            quality,
+                            url.contains(".m3u8"),
+                            iframeUrl,
+                            headers
                         )
                     )
                     return true
