@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.SubtitleFile
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Element
@@ -66,17 +67,12 @@ class HQPornerProvider : MainAPI() {
             if (it.startsWith("//")) "https:$it" else it
         } ?: return null
 
-        // We store duration in the data object for later use
-        val duration = this.parent()?.selectFirst("span.meta_data i.fa-clock-o")?.parent()?.text()?.trim() ?: ""
-
         return newMovieSearchResponse(
             title,
-            LoadUrl(fixUrl(href), poster, duration).toJson(),
+            LoadUrl(fixUrl(href), poster).toJson(),
             TvType.NSFW
         ) {
             this.posterUrl = poster
-            // Do NOT set plot here – it is not a member of MovieSearchResponse
-            // Store duration in the data object above
         }
     }
 
@@ -174,14 +170,16 @@ class HQPornerProvider : MainAPI() {
                 val quality = guessQuality(url)
                 callback.invoke(
                     newExtractorLink(
-                        "HQPorner",
-                        "HQPorner ${quality}p",
-                        url,
-                        quality,
-                        url.contains(".m3u8"),
-                        iframeUrl,
-                        headers
-                    )
+                        source = "HQPorner",
+                        name = "HQPorner ${quality}p",
+                        url = url,
+                        type = ExtractorLinkType.VIDEO
+                    ) {
+                        this.quality = quality
+                        this.isM3u8 = url.contains(".m3u8")
+                        this.referer = iframeUrl
+                        this.headers = headers
+                    }
                 )
                 return true
             }
@@ -200,14 +198,16 @@ class HQPornerProvider : MainAPI() {
                     val quality = guessQuality(url)
                     callback.invoke(
                         newExtractorLink(
-                            "HQPorner",
-                            "HQPorner ${quality}p",
-                            url,
-                            quality,
-                            url.contains(".m3u8"),
-                            iframeUrl,
-                            headers
-                        )
+                            source = "HQPorner",
+                            name = "HQPorner ${quality}p",
+                            url = url,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.quality = quality
+                            this.isM3u8 = url.contains(".m3u8")
+                            this.referer = iframeUrl
+                            this.headers = headers
+                        }
                     )
                     return true
                 }
