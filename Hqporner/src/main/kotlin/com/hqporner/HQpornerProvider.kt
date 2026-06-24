@@ -159,72 +159,77 @@ class HQPornerProvider : MainAPI() {
         return false
     }
 
-    private suspend fun extractVideoFromText(
-        text: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val urlPattern = Regex("""((?:https?:)?//[^\s"'\\]+?\.(?:mp4|m3u8))[^\s"']*""", RegexOption.IGNORE_CASE)
-        val rawLinks = urlPattern.findAll(text)
-            .map { it.groupValues[1] }
-            .map { it.trimEnd('\\', '"', '\'', ',', ';') }
-            .filter { it.startsWith("http") || it.startsWith("//") }
-            .map { if (it.startsWith("//")) "https:$it" else it }
-            .distinct()
-            .toList()
+   private suspend fun extractVideoFromText(
+    text: String,
+    referer: String,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    // Find all potential mp4/m3u8 URLs, clean them up
+    val urlPattern = Regex("""((?:https?:)?//[^\s"'\\]+?\.(?:mp4|m3u8))[^\s"']*""", RegexOption.IGNORE_CASE)
+    val rawLinks = urlPattern.findAll(text)
+        .map { it.groupValues[1] }
+        .map { it.trimEnd('\\', '"', '\'', ',', ';') }
+        .filter { it.startsWith("http") || it.startsWith("//") }
+        .map { if (it.startsWith("//")) "https:$it" else it }
+        .distinct()
+        .toList()
 
-        if (rawLinks.isEmpty()) return false
+    if (rawLinks.isEmpty()) return false
 
-        val bestPerQuality = mutableMapOf<Int, String>()
-        for (url in rawLinks) {
-            val q = extractQuality(url)
-            if (bestPerQuality[q] == null || url.length < bestPerQuality[q]!!.length) {
-                bestPerQuality[q] = url
-            }
-        }
-
-        if (bestPerQuality.isEmpty()) return false
-
-        bestPerQuality.entries
-            .sortedByDescending { it.key }
-            .forEach { (quality, url) ->
-                debug("FOUND", "$url (${quality}p)")
-                emitLink(url, referer, callback, quality)
-            }
-
-        return true
-    }
-
-    private fun extractQuality(url: String): Int {
-        val match = Regex("""/(\d{3,4})p?\.mp4""").find(url)
-        return match?.groupValues?.get(1)?.toIntOrNull() ?: when {
-            url.contains("1080") -> 1080
-            url.contains("720") -> 720
-            url.contains("360") -> 360
-            else -> 0
+    // Group by detected quality – keep one URL per quality
+    val bestPerQuality = mutableMapOf<Int, String>()
+    for (url in rawLinks) {
+        val q = extractQuality(url)
+        // If we haven't seen this quality, or the new URL looks simpler (shorter), keep it
+        if (bestPerQuality[q] == null || url.length < bestPerQuality[q]!!.length) {
+            bestPerQuality[q] = url
         }
     }
 
-    private suspend fun emitLink(
-        url: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit,
-        quality: Int = 0
-    ) {
-        val type = if (url.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-        callback.invoke(
-            newExtractorLink(
-                source = "HQPorner",
-                name = "HQPorner ${if (quality > 0) "${quality}p" else "Stream"}",
-                url = url,
-                type = type
-            ) {
-                this.referer = referer
-                this.quality = quality
-                this.headers = baseHeaders.toMutableMap().apply { remove("Referer") }
-            }
-        )
+    if (bestPerQuality.isEmpty()) return false
+
+    // Emit links sorted from highest to lowest quality
+    bestPerQuality.entries
+        .sortedByDescending { it.key }
+        .forEach { (quality, url) ->
+            debug("FOUND", "$url (${quality}p)")
+            emitLink(url, referer, callback, quality)
+        }
+
+    return true
+}
+
+private fun extractQuality(url: String): Int {
+    // Matches /1080p.mp4 or /1080.mp4
+    val match = Regex("""/(\d{3,4})p?\.mp4""").find(url)
+    return match?.groupValues?.get(1)?.toIntOrNull() ?: when {
+        url.contains("1080") -> 1080
+        url.contains("720") -> 720
+        url.contains("360") -> 360
+        else -> 0
     }
+}
+
+private suspend fun emitLink(
+    url: String,
+    referer: String,
+    callback: (ExtractorLink) -> Unit,
+    quality: Int = 0
+) {
+    val type = if (url.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+    callback.invoke(
+        newExtractorLink(
+            source = "HQPorner",
+            name = "HQPorner ${if (quality > 0) "${quality}p" else "Stream"}",
+            url = url,
+            type = type
+        ) {
+            this.referer = referer
+            this.quality = quality
+            this.headers = baseHeaders.toMutableMap().apply { remove("Referer") }
+        }
+    )
+}
 
     data class LoadUrl(
         val href: String,
