@@ -23,20 +23,21 @@ open class Xtremestream : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         val html = fetchHtml(url, referer) ?: return
-
-        // First, try to get the data parameter from the iframe on the main page
-        val dataParam = extractDataFromIframe(html, url)
-            ?: url.substringAfter("data=").takeIf { it != url }?.substringBefore("&")
-            ?: html.substringAfter("data=").takeIf { it != html }?.substringBefore("\"")
-
         val links = mutableListOf<ExtractorLink>()
 
-        if (!dataParam.isNullOrBlank()) {
-            // Build the correct manifest URLs using the data parameter
-            val baseUrl = url.substringBefore("/player/")
-            val resolutions = listOf(1080, 720, 480)
+        // 1. Try to extract iframe and its data parameter
+        val iframeInfo = extractIframeInfo(html, url)
+        if (iframeInfo != null) {
+            val (iframeUrl, dataParam) = iframeInfo
+            // Use the iframe's base domain (scheme + host) for manifest URLs
+            val baseUrl = try {
+                URI(iframeUrl).resolve("/").toString().dropLast(1) // e.g., "https://perv.xtremestream.xyz"
+            } catch (e: Exception) {
+                iframeUrl.substringBefore("/player/")
+            }
 
             // Primary pattern: /api/video/<data>&q=<res>
+            val resolutions = listOf(1080, 720, 480)
             for (res in resolutions) {
                 links.add(
                     newExtractorLink(
@@ -46,19 +47,20 @@ open class Xtremestream : ExtractorApi() {
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.quality = res
-                        this.referer = url
+                        this.referer = iframeUrl
                         this.headers = mapOf(
-                            "Referer" to url,
+                            "Referer" to iframeUrl,
                             "User-Agent" to USER_AGENT
                         )
                     }
                 )
             }
 
-            // Fallback patterns (in case the primary fails)
+            // Fallback paths (in case the primary fails)
             listOf(
                 "$baseUrl/api/manifest/$dataParam",
-                "$baseUrl/manifest/$dataParam.m3u8"
+                "$baseUrl/manifest/$dataParam.m3u8",
+                "$baseUrl/video/$dataParam.m3u8"
             ).forEach { manifestUrl ->
                 links.add(
                     newExtractorLink(
@@ -68,16 +70,18 @@ open class Xtremestream : ExtractorApi() {
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.quality = 0
-                        this.referer = url
+                        this.referer = iframeUrl
                         this.headers = mapOf(
-                            "Referer" to url,
+                            "Referer" to iframeUrl,
                             "User-Agent" to USER_AGENT
                         )
                     }
                 )
             }
-        } else {
-            // Fallback to legacy extraction (for pages without iframe)
+        }
+
+        // 2. If no iframe found, use legacy extraction (for direct-embed pages)
+        if (links.isEmpty()) {
             val legacyLinks = extractLinksFromHtml(html, url, referer)
             links.addAll(legacyLinks)
         }
@@ -96,19 +100,25 @@ open class Xtremestream : ExtractorApi() {
         return client.newCall(request).execute().body?.string()
     }
 
-    private fun extractDataFromIframe(html: String, baseUrl: String): String? {
+    /**
+     * Extracts the iframe URL and its data parameter from the HTML.
+     * Returns Pair(iframeUrl, dataParam) or null if not found.
+     */
+    private fun extractIframeInfo(html: String, baseUrl: String): Pair<String, String>? {
         val doc = Jsoup.parse(html)
-        val iframe = doc.selectFirst("iframe[src*='player/index.php?data=']")
-        val src = iframe?.attr("src") ?: return null
+        val iframe = doc.selectFirst("iframe[src*='player/index.php?data=']") ?: return null
+        val src = iframe.attr("src")
         val fullUrl = try {
             URI(baseUrl).resolve(src).toString()
         } catch (e: Exception) {
             src
         }
-        return fullUrl.substringAfter("data=").substringBefore("&").takeIf { it.isNotBlank() }
+        val dataParam = fullUrl.substringAfter("data=").substringBefore("&")
+            .takeIf { it.isNotBlank() } ?: return null
+        return Pair(fullUrl, dataParam)
     }
 
-    // Legacy extraction for pages that embed the player directly (no iframe)
+    // Legacy extraction for pages without iframe (e.g., direct player embed)
     private suspend fun extractLinksFromHtml(
         html: String,
         pageUrl: String,
@@ -116,7 +126,7 @@ open class Xtremestream : ExtractorApi() {
     ): List<ExtractorLink> {
         val links = mutableListOf<ExtractorLink>()
 
-        // Method 1: var video_id and m3u8_loader_url (original working case)
+        // Method 1: var video_id and m3u8_loader_url
         val scriptRegex = Regex("""<script[^>]*>([\s\S]*?)</script>""")
         for (scriptMatch in scriptRegex.findAll(html)) {
             val scriptContent = scriptMatch.groupValues[1]
