@@ -11,9 +11,7 @@ import org.jsoup.Jsoup
 
 open class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
-    // Main URL will be set dynamically from the iframe URL
-    override var mainUrl = "https://pervl4.xtremestream.xyz" // fallback
-
+    override var mainUrl = "https://perv.xtremestream.xyz" // will be overridden
     override val requiresReferer = true
     private val client = OkHttpClient()
 
@@ -23,135 +21,56 @@ open class Xtremestream : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Set mainUrl based on the iframe URL's base
         val baseUrl = url.substringBefore("/player/")
         if (baseUrl.isNotBlank()) mainUrl = baseUrl
 
+        // 1. Fetch the iframe HTML
         val request = Request.Builder()
             .url(url)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-            .header("Referer", referer.toString())
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Referer", referer ?: "")
             .header("User-Agent", USER_AGENT)
             .build()
 
         val response = client.newCall(request).execute()
         val html = response.body?.string() ?: return
 
-        // ----- Method 1: Enhanced script extraction -----
-        // Try to find video_id and m3u8_loader_url, but also other common patterns
+        // 2. Extract tokens from the PARENT page (if referer is available)
+        var token: String? = null
+        var mdjtoken: String? = null
+        if (referer != null) {
+            try {
+                val parentDoc = Jsoup.connect(referer)
+                    .header("User-Agent", USER_AGENT)
+                    .timeout(10000)
+                    .get()
+                val downloadBtn = parentDoc.select("button.download-button").first()
+                token = downloadBtn?.attr("data-token")?.takeIf { it.isNotBlank() }
+                mdjtoken = downloadBtn?.attr("data-mdjtoken")?.takeIf { it.isNotBlank() }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+
+        // 3. Extract data hash from URL
+        val dataHash = url.substringAfter("data=").substringBefore("&")
+
+        // 4. Try to find manifest URL in scripts (including tokens)
         val doc = Jsoup.parse(html)
         val scripts = doc.select("script").map { it.html() }.joinToString("\n")
 
-        // Patterns to extract video ID and manifest loader URL
-        val idPatterns = listOf(
-            Regex("""var\s+video_id\s*=\s*[`'"](\w+)[`'"]"""),
-            Regex("""var\s+video\s*=\s*[`'"](\w+)[`'"]"""),
-            Regex("""data\s*:\s*[`'"](\w+)[`'"]"""),
-            Regex("""videoId\s*:\s*[`'"](\w+)[`'"]""")
-        )
-        val loaderPatterns = listOf(
-            Regex("""var\s+m3u8_loader_url\s*=\s*[`'"]((?:https?:)?//[^`'"]+)[`'"]"""),
-            Regex("""loaderUrl\s*:\s*[`'"]((?:https?:)?//[^`'"]+)[`'"]"""),
-            Regex("""m3u8Url\s*:\s*[`'"]((?:https?:)?//[^`'"]+)[`'"]""")
-        )
-
-        var videoId: String? = null
-        var loaderUrl: String? = null
-
-        for (pattern in idPatterns) {
-            val match = pattern.find(scripts)
-            if (match != null) {
-                videoId = match.groupValues[1]
-                break
-            }
-        }
-
-        for (pattern in loaderPatterns) {
-            val match = pattern.find(scripts)
-            if (match != null) {
-                loaderUrl = match.groupValues[1]
-                if (!loaderUrl.startsWith("http")) {
-                    // if relative, prepend base URL
-                    loaderUrl = "$baseUrl$loaderUrl"
-                }
-                break
-            }
-        }
-
-        if (videoId != null && loaderUrl != null) {
-            // We have both ID and loader URL, build quality links
-            val resolutions = listOf(1080, 720, 480, 360)
-            resolutions.forEach { res ->
-                val linkUrl = "$loaderUrl/${videoId}&q=${res}"
-                callback.invoke(
-                    newExtractorLink(
-                        name,
-                        name,
-                        linkUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.quality = res
-                        this.referer = url
-                        this.headers = mapOf(
-                            "Accept" to "*/*",
-                            "Referer" to url,
-                            "User-Agent" to USER_AGENT
-                        )
-                    }
-                )
-            }
-            return
-        }
-
-        // ----- Method 2: Search for direct video URLs in HTML (existing) -----
-        // (Keep as is)
-
-        // ----- Method 3: Look for JSON config inside scripts (existing, but we can expand) -----
-        // Add more JSON patterns
-        val jsonPatterns = listOf(
-            Regex(""""file"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
-            Regex(""""src"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
-            Regex(""""url"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
-            Regex(""""source"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
-            Regex(""""video"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
-            Regex(""""hls"\s*:\s*"([^"]+\.(m3u8))"""),
-            Regex(""""manifest"\s*:\s*"([^"]+\.(m3u8))""")
-        )
-        // Also search for any m3u8 URL in the entire HTML (including inside scripts)
+        // Search for any m3u8 URL in scripts
         val m3u8Regex = Regex("""https?://[^\s"']+\.m3u8[^\s"']*""")
-        val mp4Regex = Regex("""https?://[^\s"']+\.mp4[^\s"']*""")
+        val directUrls = m3u8Regex.findAll(scripts).map { it.value }.toList()
 
-        val foundUrls = mutableSetOf<String>()
-
-        // Extract from JSON patterns
-        jsonPatterns.forEach { pattern ->
-            pattern.findAll(scripts).forEach { match ->
-                val videoUrl = match.groupValues[1]
-                if (videoUrl.isNotBlank()) {
-                    foundUrls.add(videoUrl)
-                }
-            }
-        }
-
-        // Also find any m3u8/mp4 URLs directly
-        m3u8Regex.findAll(html).forEach { match ->
-            val videoUrl = match.value
-            if (videoUrl.isNotBlank()) foundUrls.add(videoUrl)
-        }
-        mp4Regex.findAll(html).forEach { match ->
-            val videoUrl = match.value
-            if (videoUrl.isNotBlank()) foundUrls.add(videoUrl)
-        }
-
-        if (foundUrls.isNotEmpty()) {
-            foundUrls.forEach { videoUrl ->
-                val isM3u8 = videoUrl.contains(".m3u8")
+        if (directUrls.isNotEmpty()) {
+            directUrls.forEach { videoUrl ->
                 callback.invoke(
                     newExtractorLink(
                         name,
                         name,
                         videoUrl,
-                        type = if (isM3u8) ExtractorLinkType.M3U8 else INFER_TYPE
+                        type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = url
                         this.quality = guessQuality(videoUrl)
@@ -165,41 +84,69 @@ open class Xtremestream : ExtractorApi() {
             return
         }
 
-        // ----- Method 4: Try to guess manifest URL from the data parameter (improved) -----
-        val dataParam = url.substringAfter("data=").substringBefore("&")
-        if (dataParam.isNotBlank()) {
-            // More possible endpoints
-            val possibleUrls = listOf(
-                "$baseUrl/api/video/$dataParam/master.m3u8",
-                "$baseUrl/api/manifest/$dataParam",
-                "$baseUrl/manifest/$dataParam.m3u8",
-                "$baseUrl/hls/$dataParam/index.m3u8",
-                "$baseUrl/video/$dataParam/master.m3u8",
-                "$baseUrl/api/stream/$dataParam"
-            )
-            possibleUrls.forEach { manifestUrl ->
-                callback.invoke(
-                    newExtractorLink(
-                        name,
-                        name,
-                        manifestUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = url
-                        this.quality = 0
-                        this.headers = mapOf(
-                            "Referer" to url,
-                            "User-Agent" to USER_AGENT
-                        )
-                    }
-                )
-            }
-            return
+        // 5. Build possible manifest URLs using tokens
+        val possibleEndpoints = mutableListOf<String>()
+
+        // Base patterns (without tokens)
+        val basePatterns = listOf(
+            "/api/video/$dataHash/master.m3u8",
+            "/api/manifest/$dataHash",
+            "/manifest/$dataHash.m3u8",
+            "/hls/$dataHash/index.m3u8",
+            "/video/$dataHash/master.m3u8",
+            "/api/stream/$dataHash"
+        )
+
+        // If we have tokens, also try with them as query params
+        val tokenParams = if (token != null && mdjtoken != null) {
+            "?token=$token&mdjtoken=$mdjtoken"
+        } else if (token != null) {
+            "?token=$token"
+        } else if (mdjtoken != null) {
+            "?mdjtoken=$mdjtoken"
+        } else {
+            ""
         }
 
-        // ----- Method 5: Fallback to built-in extractor on the same URL -----
-        // (This is done in the provider, but we can also call it here)
-        // Actually the provider already calls loadExtractor as fallback, so we don't need to do it again.
+        basePatterns.forEach { pattern ->
+            possibleEndpoints.add("$baseUrl$pattern")
+            if (tokenParams.isNotEmpty()) {
+                possibleEndpoints.add("$baseUrl$pattern$tokenParams")
+            }
+        }
+
+        // Also try the player endpoint itself with tokens
+        if (dataHash.isNotBlank()) {
+            possibleEndpoints.add("$baseUrl/player/index.php?data=$dataHash$tokenParams")
+        }
+
+        // 6. Try each endpoint until one works (or just add all)
+        // To avoid too many requests, we just add them and let the player try.
+        // But we should only add those that are likely to return a manifest.
+        // For safety, we add all possible, but we can filter duplicates.
+        val uniqueEndpoints = possibleEndpoints.distinct()
+
+        uniqueEndpoints.forEach { manifestUrl ->
+            callback.invoke(
+                newExtractorLink(
+                    name,
+                    name,
+                    manifestUrl,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = url
+                    this.quality = 0
+                    this.headers = mapOf(
+                        "Referer" to url,
+                        "User-Agent" to USER_AGENT,
+                        "Origin" to baseUrl
+                    )
+                }
+            )
+        }
+
+        // 7. Last resort: try to fetch the manifest by making a HEAD request to each? Not feasible.
+        // The provider will try loadExtractor as a fallback anyway.
     }
 
     private fun guessQuality(url: String): Int {
