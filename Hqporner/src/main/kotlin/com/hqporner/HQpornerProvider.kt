@@ -112,58 +112,62 @@ class HQPornerProvider : MainAPI() {
 
     // Keep the working extraction code from the previous solution
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val loadData = tryParseJson<LoadUrl>(data)
-        val videoPageUrl = loadData?.href ?: data
-        debug("START", videoPageUrl)
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    val loadData = tryParseJson<LoadUrl>(data)
+    val videoPageUrl = loadData?.href ?: data
+    debug("START", videoPageUrl)
 
-        if (loadExtractor(videoPageUrl, subtitleCallback, callback)) return true
+    if (loadExtractor(videoPageUrl, subtitleCallback, callback)) return true
 
-        val pageHeaders = baseHeaders.toMutableMap().apply { put("Referer", mainUrl) }
-        val response = app.get(videoPageUrl, headers = pageHeaders)
-        val document = response.document ?: return false
+    val pageHeaders = baseHeaders.toMutableMap().apply { put("Referer", mainUrl) }
+    val response = app.get(videoPageUrl, headers = pageHeaders)
+    val document = response.document ?: return false
 
-        // Direct extraction from main page
-        if (extractVideoFromText(response.text, videoPageUrl, callback)) return true
+    // Direct extraction from main page – referer is main page URL
+    if (extractVideoFromText(response.text, videoPageUrl, callback)) return true
 
-        // Process iframes (skip ads)
-        val iframes = document.select("iframe[src]")
-        for (iframe in iframes) {
-            val src = iframe.attr("src")
-            if (src.isBlank()) continue
-            val url = fixUrl(src)
-            if (url.contains("adtng.com") || url.contains("doubleclick") || url.contains("go.mnaspm.com")) continue
+    // Process iframes (skip ads)
+    val iframes = document.select("iframe[src]")
+    for (iframe in iframes) {
+        val src = iframe.attr("src")
+        if (src.isBlank()) continue
+        val url = fixUrl(src)
+        if (url.contains("adtng.com") || url.contains("doubleclick") || url.contains("go.mnaspm.com")) continue
 
-            debug("PROCESS_IFRAME", url)
-            val iframeHeaders = baseHeaders.toMutableMap().apply { put("Referer", videoPageUrl) }
-            if (loadExtractor(url, subtitleCallback, callback)) return true
-            val iframeResp = app.get(url, headers = iframeHeaders)
-            if (extractVideoFromText(iframeResp.text, videoPageUrl, callback)) return true
-        }
+        debug("PROCESS_IFRAME", url)
+        val iframeHeaders = baseHeaders.toMutableMap().apply { put("Referer", videoPageUrl) }
+        if (loadExtractor(url, subtitleCallback, callback)) return true
+        val iframeResp = app.get(url, headers = iframeHeaders)
 
-        // Alt player link (skip "#")
-        val alt = document.selectFirst("a[href*='alt_player'], a:contains(Alternative)")?.attr("href")
-        if (!alt.isNullOrBlank() && alt != "#") {
-            val altUrl = fixUrl(alt)
-            debug("ALT_PLAYER", altUrl)
-            val altHeaders = baseHeaders.toMutableMap().apply { put("Referer", videoPageUrl) }
-            val altResp = app.get(altUrl, headers = altHeaders)
-            if (extractVideoFromText(altResp.text, videoPageUrl, callback)) return true
-        }
-
-        debug("FAIL", "No source found")
-        return false
+        // ⚠️ IMPORTANT: Use the iframe URL itself as referer for the extracted video
+        if (extractVideoFromText(iframeResp.text, url, callback)) return true
     }
 
-   private suspend fun extractVideoFromText(
+    // Alt player link (skip "#")
+    val alt = document.selectFirst("a[href*='alt_player'], a:contains(Alternative)")?.attr("href")
+    if (!alt.isNullOrBlank() && alt != "#") {
+        val altUrl = fixUrl(alt)
+        debug("ALT_PLAYER", altUrl)
+        val altHeaders = baseHeaders.toMutableMap().apply { put("Referer", videoPageUrl) }
+        val altResp = app.get(altUrl, headers = altHeaders)
+        if (extractVideoFromText(altResp.text, altUrl, callback)) return true
+    }
+
+    debug("FAIL", "No source found")
+    return false
+}
+
+// extractVideoFromText unchanged, but ensure it uses the referer it receives
+private suspend fun extractVideoFromText(
     text: String,
     referer: String,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
+    // ... (keep the same multi-quality extraction code you had before) ...
     // Find all potential mp4/m3u8 URLs, clean them up
     val urlPattern = Regex("""((?:https?:)?//[^\s"'\\]+?\.(?:mp4|m3u8))[^\s"']*""", RegexOption.IGNORE_CASE)
     val rawLinks = urlPattern.findAll(text)
