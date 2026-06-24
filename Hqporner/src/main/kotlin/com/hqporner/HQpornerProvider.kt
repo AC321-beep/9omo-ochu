@@ -158,66 +158,50 @@ class HQPornerProvider : MainAPI() {
     referer: String,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    // 1. Broad catch for any mp4/m3u8 URL, including protocol-relative (//)
-    val broadPattern = Regex("""(?:"|')\s*(?:\w+)\s*(?:"|')?\s*:\s*(?:"|')((?:https?:)?//[^"']+?\.(?:m3u8|mp4)[^"']*)(?:"|')""", RegexOption.IGNORE_CASE)
-    // Simpler: just find any //...mp4 or https://...mp4 in the whole text
-    val simpler = Regex("""((?:https?:)?//[^\s"']+?\.(?:m3u8|mp4)[^\s"']*)""", RegexOption.IGNORE_CASE)
+    // Find all potential mp4/m3u8 URLs (protocol-relative or absolute)
+    val urlPattern = Regex("""((?:https?:)?//[^\s"']+?\.(?:mp4|m3u8)[^\s"']*)""", RegexOption.IGNORE_CASE)
+    val allMatches = urlPattern.findAll(text)
 
-    for (pattern in listOf(simpler, broadPattern)) {
-        val match = pattern.find(text)
-        if (match != null) {
-            var url = match.groupValues[1]
-            // Fix protocol‑relative
-            if (url.startsWith("//")) url = "https:$url"
-            debug("FOUND", url)
-            emitLink(url, referer, callback)
-            return true
+    // Collect all valid URLs, cleaning up trailing junk like backslashes or escaped quotes
+    val links = allMatches
+        .map { it.groupValues[1] }
+        .map { url ->
+            url.trimEnd('\\', '"', '\'', ',', ';')  // remove trailing escape chars
         }
-    }
+        .filter { it.startsWith("http") || it.startsWith("//") }
+        .map { if (it.startsWith("//")) "https:$it" else it }
+        .distinct()
+        .toList()
 
-    // 2. Fluid Player JSON patterns (single/double quotes)
-    val jsonPatterns = listOf(
-        Regex("""["']file["']\s*:\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
-        Regex("""["']src["']\s*:\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
-        Regex("""["'](?:video_url|source)["']\s*:\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE)
-    )
-    for (pat in jsonPatterns) {
-        val m = pat.find(text)
-        if (m != null) {
-            var url = m.groupValues[1]
-            if (url.startsWith("//")) url = "https:$url"
-            debug("FOUND_JSON", url)
-            emitLink(url, referer, callback)
-            return true
-        }
-    }
+    if (links.isEmpty()) return false
 
-    // 3. HTML5 tags (just in case)
-    val htmlPatterns = listOf(
-        Regex("""<video[^>]+src\s*=\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
-        Regex("""<source[^>]+src\s*=\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE)
-    )
-    for (pat in htmlPatterns) {
-        val m = pat.find(text)
-        if (m != null) {
-            var url = m.groupValues[1]
-            if (url.startsWith("//")) url = "https:$url"
-            debug("FOUND_TAG", url)
-            emitLink(url, referer, callback)
-            return true
-        }
-    }
-    return false
+    // Pick the best quality based on resolution in the URL
+    val bestUrl = links.maxByOrNull { extractQuality(it) } ?: links.first()
+    debug("FOUND_BEST", "$bestUrl (${extractQuality(bestUrl)}p)")
+
+    emitLink(bestUrl, referer, callback, extractQuality(bestUrl))
+    return true
 }
 
-private suspend fun emitLink(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
-    val quality = when {
-        url.contains("1080", true) -> 1080
-        url.contains("720", true) -> 720
-        url.contains("360", true) -> 360
+// Extract numeric quality from a URL like ".../1080.mp4"
+private fun extractQuality(url: String): Int {
+    val match = Regex("""/(\d{3,4})p?\.mp4""").find(url)
+    return match?.groupValues?.get(1)?.toIntOrNull() ?: when {
+        url.contains("1080") -> 1080
+        url.contains("720") -> 720
+        url.contains("360") -> 360
         else -> 0
     }
+}
+
+private suspend fun emitLink(
+    url: String,
+    referer: String,
+    callback: (ExtractorLink) -> Unit,
+    quality: Int = 0
+) {
     val type = if (url.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+    debug("LINK", "$url (${quality}p)")
     callback.invoke(
         newExtractorLink(
             source = "HQPorner",
