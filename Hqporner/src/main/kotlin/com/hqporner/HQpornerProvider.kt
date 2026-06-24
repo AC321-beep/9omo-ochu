@@ -23,6 +23,12 @@ class HQPornerProvider : MainAPI() {
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
     )
 
+    // Known ad/tracker domains to skip when looking for video iframes
+    private val adDomains = listOf(
+        "adtng.com", "doubleclick.net", "googleadservices.com",
+        "adservice", "trafficjunky", "exoclick", "popads", "adnxs"
+    )
+
     override val mainPage = mainPageOf(
         mainUrl to "Recent",
         "$mainUrl/category/milf" to "Milf",
@@ -42,10 +48,13 @@ class HQPornerProvider : MainAPI() {
     }
 
     private fun debug(tag: String, msg: String) {
-        // truncate long messages to avoid log overflow
         val maxLen = 2000
         val out = if (msg.length > maxLen) msg.substring(0, maxLen) + "... [TRUNCATED]" else msg
         println("HQP_DEBUG [$tag] $out")
+    }
+
+    private fun isAdDomain(url: String): Boolean {
+        return adDomains.any { url.contains(it, ignoreCase = true) }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -113,7 +122,6 @@ class HQPornerProvider : MainAPI() {
         val videoPageUrl = loadData?.href ?: data
         debug("START", "Video page: $videoPageUrl")
 
-        // Try built-in first
         if (loadExtractor(videoPageUrl, subtitleCallback, callback)) {
             debug("SUCCESS", "Built-in worked")
             return true
@@ -121,105 +129,100 @@ class HQPornerProvider : MainAPI() {
 
         val pageHeaders = baseHeaders.toMutableMap().apply { put("Referer", mainUrl) }
         val response = app.get(videoPageUrl, headers = pageHeaders)
-        val document = response.document
-        if (document == null) {
+        val document = response.document ?: run {
             debug("FAIL", "Could not load video page")
             return false
         }
 
-        // Dump first 3000 chars of HTML to see what's there
-        debug("HTML", response.text.take(3000))
+        val pageText = response.text
 
-        // Try iframes
+        // 1. Direct video source on the main page (e.g., <video> tag, m3u8 in scripts)
+        if (extractVideoFromText(pageText, videoPageUrl, callback)) {
+            return true
+        }
+
+        // 2. Look for all iframes, skip ad domains
         val iframes = document.select("iframe[src]")
         for (iframe in iframes) {
             val src = iframe.attr("src")
             if (src.isNotBlank()) {
                 val iframeUrl = fixUrl(src)
-                debug("IFRAME", iframeUrl)
+                debug("IFRAME_FOUND", iframeUrl)
+                if (isAdDomain(iframeUrl)) {
+                    debug("IFRAME_SKIP", "Skipping ad iframe")
+                    continue
+                }
                 val iframeHeaders = baseHeaders.toMutableMap().apply { put("Referer", videoPageUrl) }
                 if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
                     debug("SUCCESS", "Built-in on iframe")
                     return true
                 }
-                val iframeResponse = app.get(iframeUrl, headers = iframeHeaders)
-                debug("IFRAME_HTML", iframeResponse.text.take(3000))
-                if (extractVideoFromPage(iframeUrl, iframeHeaders, videoPageUrl, subtitleCallback, callback, iframeResponse.text)) {
+                val iframeResp = app.get(iframeUrl, headers = iframeHeaders)
+                if (extractVideoFromText(iframeResp.text, videoPageUrl, callback)) {
                     return true
                 }
             }
         }
 
-        // Alt player link
+        // 3. Alternative player link
         val altLink = document.selectFirst("a[href*='alt_player'], a.btn-alt, a:contains(Alternative)")?.attr("href")
             ?: document.selectFirst("[data-alt-player]")?.attr("data-alt-player")
         if (!altLink.isNullOrBlank()) {
             val altUrl = fixUrl(altLink)
             debug("ALT_PLAYER", altUrl)
             val altHeaders = baseHeaders.toMutableMap().apply { put("Referer", videoPageUrl) }
-            val altResponse = app.get(altUrl, headers = altHeaders)
-            debug("ALT_HTML", altResponse.text.take(3000))
-            if (extractVideoFromPage(altUrl, altHeaders, videoPageUrl, subtitleCallback, callback, altResponse.text)) {
+            val altResp = app.get(altUrl, headers = altHeaders)
+            if (extractVideoFromText(altResp.text, videoPageUrl, callback)) {
                 return true
             }
         }
 
-        // Try the video page itself with its own text
-        if (extractVideoFromPage(videoPageUrl, pageHeaders, videoPageUrl, subtitleCallback, callback, response.text)) {
-            return true
-        }
-
-        debug("FAIL", "No source found")
+        debug("FAIL", "No playable source found")
         return false
     }
 
-    private suspend fun extractVideoFromPage(
-        pageUrl: String,
-        headers: Map<String, String>,
+    private suspend fun extractVideoFromText(
+        text: String,
         referer: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit,
-        pageText: String
+        callback: (ExtractorLink) -> Unit
     ): Boolean {
-        debug("EXTRACTING", pageUrl)
-
-        // Standard HTML5 tags
-        val regexVideoSrc = Regex("""<video[^>]+src\s*=\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']""", RegexOption.IGNORE_CASE)
-        val matchVideo = regexVideoSrc.find(pageText)
-        if (matchVideo != null) {
-            val src = matchVideo.groupValues[1]
-            debug("VIDEO_TAG", src)
-            emitLink(fixUrl(src), referer, callback)
+        // Patterns for direct mp4/m3u8 URLs
+        val directUrl = Regex("""(https?://[^\s"']+?\.(?:mp4|m3u8)[^\s"']*)""", RegexOption.IGNORE_CASE)
+        val match = directUrl.find(text)
+        if (match != null && !isAdDomain(match.groupValues[1])) {
+            val url = match.groupValues[1]
+            debug("DIRECT_URL", url)
+            emitLink(url, referer, callback)
             return true
         }
 
-        // <source> inside video
-        val regexSource = Regex("""<source[^>]+src\s*=\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']""", RegexOption.IGNORE_CASE)
-        val matchSource = regexSource.find(pageText)
-        if (matchSource != null) {
-            val src = matchSource.groupValues[1]
-            debug("SOURCE_TAG", src)
-            emitLink(fixUrl(src), referer, callback)
-            return true
-        }
-
-        // Any direct URL in text (most common)
-        val urlPattern = Regex("""(https?://[^\s"']+?\.(?:mp4|m3u8)[^\s"']*)""", RegexOption.IGNORE_CASE)
-        val matchUrl = urlPattern.find(pageText)
-        if (matchUrl != null) {
-            val src = matchUrl.groupValues[1]
-            debug("DIRECT_URL", src)
-            emitLink(src, referer, callback)
-            return true
-        }
-
-        // JSON-like fields
+        // Patterns inside JSON/JavaScript
         val jsonPattern = Regex("""["'](?:file|video_url|src|source)["']\s*:\s*["']([^"']+\.(?:mp4|m3u8))["']""", RegexOption.IGNORE_CASE)
-        val matchJson = jsonPattern.find(pageText)
-        if (matchJson != null) {
-            val src = matchJson.groupValues[1]
-            debug("JSON_URL", src)
-            emitLink(fixUrl(src), referer, callback)
+        val jsonMatch = jsonPattern.find(text)
+        if (jsonMatch != null && !isAdDomain(jsonMatch.groupValues[1])) {
+            val url = jsonMatch.groupValues[1]
+            debug("JSON_URL", url)
+            emitLink(fixUrl(url), referer, callback)
+            return true
+        }
+
+        // <video> tag src
+        val videoTag = Regex("""<video[^>]+src\s*=\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']""", RegexOption.IGNORE_CASE)
+        val videoMatch = videoTag.find(text)
+        if (videoMatch != null && !isAdDomain(videoMatch.groupValues[1])) {
+            val url = videoMatch.groupValues[1]
+            debug("VIDEO_TAG", url)
+            emitLink(fixUrl(url), referer, callback)
+            return true
+        }
+
+        // <source> tag inside video
+        val sourceTag = Regex("""<source[^>]+src\s*=\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']""", RegexOption.IGNORE_CASE)
+        val sourceMatch = sourceTag.find(text)
+        if (sourceMatch != null && !isAdDomain(sourceMatch.groupValues[1])) {
+            val url = sourceMatch.groupValues[1]
+            debug("SOURCE_TAG", url)
+            emitLink(fixUrl(url), referer, callback)
             return true
         }
 
