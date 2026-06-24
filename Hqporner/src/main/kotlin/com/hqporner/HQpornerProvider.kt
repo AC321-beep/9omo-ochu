@@ -1,5 +1,6 @@
 package com.hqporner
 
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
@@ -41,6 +42,12 @@ class HQPornerProvider : MainAPI() {
         }
     }
 
+    // ============== Debug helper ==============
+    private fun debug(tag: String, msg: String) {
+        Log.d("HQP_DEBUG", "[$tag] $msg")
+    }
+
+    // ============== Main Page ==============
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val baseUrl = request.data
         val url = if (page == 1) baseUrl else {
@@ -96,6 +103,7 @@ class HQPornerProvider : MainAPI() {
         }
     }
 
+    // ============== Link Extraction ==============
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -104,41 +112,61 @@ class HQPornerProvider : MainAPI() {
     ): Boolean {
         val loadData = tryParseJson<LoadUrl>(data)
         val videoPageUrl = loadData?.href ?: data
+        debug("START", "Video page: $videoPageUrl")
 
-        // 1. Try built-in extractor directly on the video page
+        // 1. Built-in extractor
         if (loadExtractor(videoPageUrl, subtitleCallback, callback)) {
+            debug("SUCCESS", "Built-in extractor worked on video page")
             return true
         }
 
         val pageHeaders = baseHeaders.toMutableMap().apply { put("Referer", mainUrl) }
-        val document = app.get(videoPageUrl, headers = pageHeaders).document ?: return false
-
-        // 2. Look for the usual iframe (all selectFirst calls are safe-chained with ?.)
-        val iframeSrc = document.selectFirst("div.video-container iframe")?.attr("src")
-            ?: document.selectFirst("iframe[src*='mydaddy.cc']")?.attr("src")
-            ?: document.selectFirst("iframe[src]")?.attr("src")
-        if (!iframeSrc.isNullOrBlank()) {
-            val iframeUrl = fixUrl(iframeSrc)
-            val iframeHeaders = baseHeaders.toMutableMap().apply { put("Referer", videoPageUrl) }
-            if (loadExtractor(iframeUrl, subtitleCallback, callback)) return true
-            if (extractVideoFromPage(iframeUrl, iframeHeaders, videoPageUrl, subtitleCallback, callback)) return true
+        val document = app.get(videoPageUrl, headers = pageHeaders).document
+        if (document == null) {
+            debug("FAIL", "Could not load video page")
+            return false
         }
 
-        // 3. Fallback: look for an "Alternative Player" button/link
-        val altPlayerLink = document.selectFirst("a[href*='alt_player'], a.btn-alt, a:contains(Alternative)")?.attr("href")
+        // 2. Extract from all iframes
+        val iframes = document.select("iframe[src]")
+        for (iframe in iframes) {
+            val src = iframe.attr("src")
+            if (src.isNotBlank()) {
+                val iframeUrl = fixUrl(src)
+                debug("IFRAME", "Found iframe: $iframeUrl")
+                val iframeHeaders = baseHeaders.toMutableMap().apply { put("Referer", videoPageUrl) }
+                if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
+                    debug("SUCCESS", "Built-in extractor worked on iframe")
+                    return true
+                }
+                if (extractVideoFromPage(iframeUrl, iframeHeaders, videoPageUrl, subtitleCallback, callback)) {
+                    return true
+                }
+            }
+        }
+
+        // 3. Look for an "Alternative Player" link
+        val altLink = document.selectFirst("a[href*='alt_player'], a.btn-alt, a:contains(Alternative)")?.attr("href")
             ?: document.selectFirst("[data-alt-player]")?.attr("data-alt-player")
-        if (!altPlayerLink.isNullOrBlank()) {
-            val altUrl = fixUrl(altPlayerLink)
+        if (!altLink.isNullOrBlank()) {
+            val altUrl = fixUrl(altLink)
+            debug("ALT_PLAYER", "Alternative player URL: $altUrl")
             val altHeaders = baseHeaders.toMutableMap().apply { put("Referer", videoPageUrl) }
-            if (extractVideoFromPage(altUrl, altHeaders, videoPageUrl, subtitleCallback, callback)) return true
+            if (extractVideoFromPage(altUrl, altHeaders, videoPageUrl, subtitleCallback, callback)) {
+                return true
+            }
         }
 
-        // 4. Try to extract directly from the video page itself
-        if (extractVideoFromPage(videoPageUrl, pageHeaders, videoPageUrl, subtitleCallback, callback)) return true
+        // 4. Try the video page itself (some sites load player dynamically)
+        if (extractVideoFromPage(videoPageUrl, pageHeaders, videoPageUrl, subtitleCallback, callback)) {
+            return true
+        }
 
+        debug("FAIL", "No source found after all attempts")
         return false
     }
 
+    // Common extraction from a given page
     private suspend fun extractVideoFromPage(
         pageUrl: String,
         headers: Map<String, String>,
@@ -146,55 +174,87 @@ class HQPornerProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        debug("EXTRACTING", "From $pageUrl")
         try {
-            val page = app.get(pageUrl, headers = headers).document ?: return false
+            val response = app.get(pageUrl, headers = headers)
+            val page = response.document ?: return false
+            val pageText = response.text
 
-            // <video><source> tags
-            val sources = page.select("video source")
-            if (sources.isNotEmpty()) {
-                // best is non-null because sources is not empty, but !! clears any nullable inference issues
-                val best = sources.maxByOrNull { s ->
-                    guessQualityFromLabel(s.attr("label") ?: s.attr("title") ?: "")
-                } ?: sources.first()!!
-                val src = best.attr("src")
+            // 1. <video> sources
+            val videoSources = page.select("video source")
+            for (source in videoSources) {
+                val src = source.attr("src")
                 if (src.isNotBlank()) {
-                    emitLink(fixUrl(src), referer, callback, guessQualityFromLabel(best.attr("label")))
+                    debug("SOURCE_TAG", src)
+                    val q = guessQualityFromLabel(source.attr("label"))
+                    emitLink(fixUrl(src), referer, callback, q)
                     return true
                 }
             }
 
-            // video[src]
+            // 2. video[src]
             val videoSrc = page.selectFirst("video[src]")?.attr("src")
             if (!videoSrc.isNullOrBlank()) {
+                debug("VIDEO_SRC", videoSrc)
                 emitLink(fixUrl(videoSrc), referer, callback)
                 return true
             }
 
-            // og:video meta
+            // 3. meta og:video
             val metaVideo = page.selectFirst("meta[property='og:video']")?.attr("content")
             if (!metaVideo.isNullOrBlank()) {
+                debug("META_OG", metaVideo)
                 emitLink(fixUrl(metaVideo), referer, callback)
                 return true
             }
 
-            // Scan <script> blocks for any .mp4 / .m3u8 URLs
-            val scriptText = page.select("script").joinToString("\n") { it.html() }
-            val urlPattern = Regex("""['"](https?://[^"']+?\.(?:mp4|m3u8)[^"']*?)['"]""", RegexOption.IGNORE_CASE)
-            val match = urlPattern.find(scriptText)
-            if (match != null) {
-                emitLink(fixUrl(match.groupValues[1]), referer, callback)
-                return true
+            // 4. Search for URLs in scripts / JSON / data-attributes
+            val patterns = listOf(
+                """https?://[^"'\s]+?\.(?:mp4|m3u8)[^"'\s]*""".toRegex(RegexOption.IGNORE_CASE),
+                """["'](?:file|video_url|src)["']\s*:\s*["']([^"']+\.(?:mp4|m3u8))["']""".toRegex(RegexOption.IGNORE_CASE),
+                """['"]source['"]\s*:\s*['"]([^'"]+\.mp4)['"]""".toRegex(RegexOption.IGNORE_CASE),
+                """var\s+\w+\s*=\s*['"]([^'"]+\.m3u8)['"]""".toRegex(RegexOption.IGNORE_CASE)
+            )
+            for (pat in patterns) {
+                val match = pat.find(pageText)
+                if (match != null) {
+                    val url = match.groupValues[1].ifBlank { match.value }
+                    if (url.contains(".mp4") || url.contains(".m3u8")) {
+                        debug("REGEX_MATCH", url)
+                        emitLink(fixUrl(url), referer, callback)
+                        return true
+                    }
+                }
             }
 
-            // JSON-like fields (file, video_url, src)
-            val jsonPattern = Regex("""["'](?:file|video_url|src)["']\s*:\s*['"]([^"']+\.(?:mp4|m3u8))['"]""", RegexOption.IGNORE_CASE)
-            val jsonMatch = jsonPattern.find(scriptText)
-            if (jsonMatch != null) {
-                emitLink(fixUrl(jsonMatch.groupValues[1]), referer, callback)
-                return true
+            // 5. Check for Base64 encoded iframe/data (common on adult sites)
+            val base64Pattern = """atob\('([^']+)'\)""".toRegex()
+            val b64Match = base64Pattern.find(pageText)
+            if (b64Match != null) {
+                val decoded = android.util.Base64.decode(b64Match.groupValues[1], android.util.Base64.DEFAULT)
+                val decodedStr = String(decoded)
+                val innerUrl = """https?://[^"'\s]+""".toRegex().find(decodedStr)?.value
+                if (innerUrl != null) {
+                    debug("BASE64_DECODED", innerUrl)
+                    // try to extract from that inner URL (maybe it's an iframe/m3u8)
+                    if (extractVideoFromPage(innerUrl, headers, referer, subtitleCallback, callback)) {
+                        return true
+                    }
+                }
             }
+
+            // 6. External embed (e.g., mydaddy.cc, etc.) – look for any iframe
+            val embedIframe = page.selectFirst("iframe[src]")
+            if (embedIframe != null) {
+                val embedUrl = fixUrl(embedIframe.attr("src"))
+                debug("EMBED_IFRAME", embedUrl)
+                if (extractVideoFromPage(embedUrl, headers, referer, subtitleCallback, callback)) {
+                    return true
+                }
+            }
+
         } catch (e: Exception) {
-            e.printStackTrace()
+            debug("ERROR", e.message ?: "unknown")
         }
         return false
     }
@@ -208,6 +268,8 @@ class HQPornerProvider : MainAPI() {
         val qualityValue = quality ?: guessQuality(url)
         val linkType = if (url.contains(".m3u8", ignoreCase = true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
         val headers = baseHeaders.toMutableMap().apply { remove("Referer") }
+
+        debug("LINK", "Found: $url (${qualityValue}p)")
 
         callback.invoke(
             newExtractorLink(
@@ -223,22 +285,18 @@ class HQPornerProvider : MainAPI() {
         )
     }
 
-    private fun guessQuality(url: String): Int {
-        return when {
-            url.contains("1080", ignoreCase = true) -> 1080
-            url.contains("720", ignoreCase = true) -> 720
-            url.contains("360", ignoreCase = true) -> 360
-            else -> 0
-        }
+    private fun guessQuality(url: String): Int = when {
+        url.contains("1080", ignoreCase = true) -> 1080
+        url.contains("720", ignoreCase = true) -> 720
+        url.contains("360", ignoreCase = true) -> 360
+        else -> 0
     }
 
-    private fun guessQualityFromLabel(label: String): Int {
-        return when {
-            label.contains("1080") -> 1080
-            label.contains("720") -> 720
-            label.contains("360") -> 360
-            else -> 0
-        }
+    private fun guessQualityFromLabel(label: String): Int = when {
+        label.contains("1080") -> 1080
+        label.contains("720") -> 720
+        label.contains("360") -> 360
+        else -> 0
     }
 
     data class LoadUrl(
