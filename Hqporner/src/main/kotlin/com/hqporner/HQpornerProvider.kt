@@ -23,12 +23,6 @@ class HQPornerProvider : MainAPI() {
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
     )
 
-    private fun debug(tag: String, msg: String) {
-        val maxLen = 2000
-        val out = if (msg.length > maxLen) msg.substring(0, maxLen) + "... [TRUNCATED]" else msg
-        println("HQP_DEBUG [$tag] $out")
-    }
-
     override val mainPage = mainPageOf(
         mainUrl to "Recent",
         "$mainUrl/category/milf" to "Milf",
@@ -47,6 +41,12 @@ class HQPornerProvider : MainAPI() {
         }
     }
 
+    // Debug helper – remove or keep, it won't break anything
+    private fun debug(tag: String, msg: String) {
+        println("HQP_DEBUG [$tag] ${msg.take(1500)}")
+    }
+
+    // --- Main page, search, load unchanged ---
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val baseUrl = request.data
         val url = if (page == 1) baseUrl else {
@@ -102,6 +102,7 @@ class HQPornerProvider : MainAPI() {
         }
     }
 
+    // --- Link extraction ---
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -112,30 +113,22 @@ class HQPornerProvider : MainAPI() {
         val videoPageUrl = loadData?.href ?: data
         debug("START", videoPageUrl)
 
-        if (loadExtractor(videoPageUrl, subtitleCallback, callback)) {
-            return true
-        }
+        if (loadExtractor(videoPageUrl, subtitleCallback, callback)) return true
 
         val pageHeaders = baseHeaders.toMutableMap().apply { put("Referer", mainUrl) }
         val response = app.get(videoPageUrl, headers = pageHeaders)
-        val document = response.document ?: run {
-            debug("FAIL", "No doc")
-            return false
-        }
+        val document = response.document ?: return false
 
-        // 1. Try direct extraction from main page
+        // 1. Direct extraction from main page
         if (extractVideoFromText(response.text, videoPageUrl, callback)) return true
 
-        // 2. Process all iframes
+        // 2. Process all iframes (skip ads)
         val iframes = document.select("iframe[src]")
         for (iframe in iframes) {
             val src = iframe.attr("src")
             if (src.isBlank()) continue
             val url = fixUrl(src)
-
-            // skip ads
             if (url.contains("adtng.com") || url.contains("doubleclick") || url.contains("go.mnaspm.com")) {
-                debug("SKIP_AD", url)
                 continue
             }
 
@@ -143,7 +136,6 @@ class HQPornerProvider : MainAPI() {
             val iframeHeaders = baseHeaders.toMutableMap().apply { put("Referer", videoPageUrl) }
             if (loadExtractor(url, subtitleCallback, callback)) return true
             val iframeResp = app.get(url, headers = iframeHeaders)
-            debug("IFRAME_HTML", iframeResp.text.take(1000))
             if (extractVideoFromText(iframeResp.text, videoPageUrl, callback)) return true
         }
 
@@ -161,52 +153,49 @@ class HQPornerProvider : MainAPI() {
         return false
     }
 
-    // Now a suspend function – can call emitLink which uses newExtractorLink
     private suspend fun extractVideoFromText(
         text: String,
         referer: String,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // 1. Direct mp4/m3u8 URL in text
-        val direct = Regex("""(https?://[^\s"']+?\.(?:mp4|m3u8)[^\s"']*)""", RegexOption.IGNORE_CASE).find(text)
-        if (direct != null) {
-            emitLink(direct.value, referer, callback, guessQuality(direct.value))
-            return true
-        }
+        // Combined list of patterns, ordered by likelihood
+        val patterns = listOf(
+            // Fluid Player / sources: [{file: "..."}] (single quotes or double)
+            Regex("""["']file["']\s*:\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
+            Regex("""["']src["']\s*:\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
+            // Generic JSON fields
+            Regex("""["'](?:video_url|source)["']\s*:\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
+            // Direct URL in text
+            Regex("""(https?://[^\s"']+?\.(?:m3u8|mp4)[^\s"']*)""", RegexOption.IGNORE_CASE),
+            // HTML5 tags
+            Regex("""<video[^>]+src\s*=\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
+            Regex("""<source[^>]+src\s*=\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE)
+        )
 
-        // 2. JSON fields: file, video_url, src, source
-        val json = Regex("""["'](?:file|video_url|src|source)["']\s*:\s*["']([^"']+\.(?:mp4|m3u8))["']""", RegexOption.IGNORE_CASE).find(text)
-        if (json != null) {
-            emitLink(fixUrl(json.groupValues[1]), referer, callback, guessQuality(json.groupValues[1]))
-            return true
+        for (pattern in patterns) {
+            val match = pattern.find(text)
+            if (match != null) {
+                val url = match.groupValues[1].let {
+                    if (it.startsWith("//")) "https:$it" else it
+                }
+                if (url.startsWith("http") && (url.contains(".m3u8") || url.contains(".mp4"))) {
+                    debug("FOUND", url)
+                    emitLink(url, referer, callback)
+                    return true
+                }
+            }
         }
-
-        // 3. HTML5 video tag src
-        val videoTag = Regex("""<video[^>]+src\s*=\s*["']([^"']+\.(?:mp4|m3u8))["']""", RegexOption.IGNORE_CASE).find(text)
-        if (videoTag != null) {
-            emitLink(fixUrl(videoTag.groupValues[1]), referer, callback, guessQuality(videoTag.groupValues[1]))
-            return true
-        }
-
-        // 4. source tag inside video
-        val sourceTag = Regex("""<source[^>]+src\s*=\s*["']([^"']+\.(?:mp4|m3u8))["']""", RegexOption.IGNORE_CASE).find(text)
-        if (sourceTag != null) {
-            emitLink(fixUrl(sourceTag.groupValues[1]), referer, callback, guessQuality(sourceTag.groupValues[1]))
-            return true
-        }
-
         return false
     }
 
-    // Changed to suspend function
-    private suspend fun emitLink(
-        url: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit,
-        quality: Int = guessQuality(url)
-    ) {
-        val type = if (url.contains(".m3u8", ignoreCase = true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-        debug("LINK", "$url (${quality}p)")
+    private suspend fun emitLink(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
+        val quality = when {
+            url.contains("1080", true) -> 1080
+            url.contains("720", true) -> 720
+            url.contains("360", true) -> 360
+            else -> 0
+        }
+        val type = if (url.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
         callback.invoke(
             newExtractorLink(
                 source = "HQPorner",
@@ -219,15 +208,6 @@ class HQPornerProvider : MainAPI() {
                 this.headers = baseHeaders.toMutableMap().apply { remove("Referer") }
             }
         )
-    }
-
-    private fun guessQuality(url: String): Int {
-        return when {
-            url.contains("1080", true) -> 1080
-            url.contains("720", true) -> 720
-            url.contains("360", true) -> 360
-            else -> 0
-        }
     }
 
     data class LoadUrl(
