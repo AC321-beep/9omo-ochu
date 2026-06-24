@@ -216,7 +216,7 @@ private fun extractQuality(url: String): Int {
 
 private suspend fun emitLink(
     url: String,
-    referer: String,
+    referer: String, // still passed but not used for the video request
     callback: (ExtractorLink) -> Unit,
     quality: Int = 0
 ) {
@@ -228,12 +228,14 @@ private suspend fun emitLink(
             url = url,
             type = type
         ) {
-            this.referer = referer
+            // No Referer – speeds up CDN delivery, mimics wget2 behaviour
+            this.referer = ""
             this.quality = quality
-            this.headers = baseHeaders.toMutableMap().apply { remove("Referer") }
+            this.headers = mapOf(
+                "User-Agent" to baseHeaders["User-Agent"]!!
+            )
         }
     )
-}
 
     data class LoadUrl(
         val href: String,
