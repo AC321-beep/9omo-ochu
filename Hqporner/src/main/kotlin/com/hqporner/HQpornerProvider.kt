@@ -154,61 +154,83 @@ class HQPornerProvider : MainAPI() {
     }
 
     private suspend fun extractVideoFromText(
-        text: String,
-        referer: String,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        // Combined list of patterns, ordered by likelihood
-        val patterns = listOf(
-            // Fluid Player / sources: [{file: "..."}] (single quotes or double)
-            Regex("""["']file["']\s*:\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
-            Regex("""["']src["']\s*:\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
-            // Generic JSON fields
-            Regex("""["'](?:video_url|source)["']\s*:\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
-            // Direct URL in text
-            Regex("""(https?://[^\s"']+?\.(?:m3u8|mp4)[^\s"']*)""", RegexOption.IGNORE_CASE),
-            // HTML5 tags
-            Regex("""<video[^>]+src\s*=\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
-            Regex("""<source[^>]+src\s*=\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE)
-        )
+    text: String,
+    referer: String,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    // 1. Broad catch for any mp4/m3u8 URL, including protocol-relative (//)
+    val broadPattern = Regex("""(?:"|')\s*(?:\w+)\s*(?:"|')?\s*:\s*(?:"|')((?:https?:)?//[^"']+?\.(?:m3u8|mp4)[^"']*)(?:"|')""", RegexOption.IGNORE_CASE)
+    // Simpler: just find any //...mp4 or https://...mp4 in the whole text
+    val simpler = Regex("""((?:https?:)?//[^\s"']+?\.(?:m3u8|mp4)[^\s"']*)""", RegexOption.IGNORE_CASE)
 
-        for (pattern in patterns) {
-            val match = pattern.find(text)
-            if (match != null) {
-                val url = match.groupValues[1].let {
-                    if (it.startsWith("//")) "https:$it" else it
-                }
-                if (url.startsWith("http") && (url.contains(".m3u8") || url.contains(".mp4"))) {
-                    debug("FOUND", url)
-                    emitLink(url, referer, callback)
-                    return true
-                }
-            }
+    for (pattern in listOf(simpler, broadPattern)) {
+        val match = pattern.find(text)
+        if (match != null) {
+            var url = match.groupValues[1]
+            // Fix protocol‑relative
+            if (url.startsWith("//")) url = "https:$url"
+            debug("FOUND", url)
+            emitLink(url, referer, callback)
+            return true
         }
-        return false
     }
 
-    private suspend fun emitLink(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
-        val quality = when {
-            url.contains("1080", true) -> 1080
-            url.contains("720", true) -> 720
-            url.contains("360", true) -> 360
-            else -> 0
+    // 2. Fluid Player JSON patterns (single/double quotes)
+    val jsonPatterns = listOf(
+        Regex("""["']file["']\s*:\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
+        Regex("""["']src["']\s*:\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
+        Regex("""["'](?:video_url|source)["']\s*:\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE)
+    )
+    for (pat in jsonPatterns) {
+        val m = pat.find(text)
+        if (m != null) {
+            var url = m.groupValues[1]
+            if (url.startsWith("//")) url = "https:$url"
+            debug("FOUND_JSON", url)
+            emitLink(url, referer, callback)
+            return true
         }
-        val type = if (url.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-        callback.invoke(
-            newExtractorLink(
-                source = "HQPorner",
-                name = "HQPorner ${if (quality > 0) "${quality}p" else "Stream"}",
-                url = url,
-                type = type
-            ) {
-                this.referer = referer
-                this.quality = quality
-                this.headers = baseHeaders.toMutableMap().apply { remove("Referer") }
-            }
-        )
     }
+
+    // 3. HTML5 tags (just in case)
+    val htmlPatterns = listOf(
+        Regex("""<video[^>]+src\s*=\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE),
+        Regex("""<source[^>]+src\s*=\s*["']([^"']+\.(?:m3u8|mp4))["']""", RegexOption.IGNORE_CASE)
+    )
+    for (pat in htmlPatterns) {
+        val m = pat.find(text)
+        if (m != null) {
+            var url = m.groupValues[1]
+            if (url.startsWith("//")) url = "https:$url"
+            debug("FOUND_TAG", url)
+            emitLink(url, referer, callback)
+            return true
+        }
+    }
+    return false
+}
+
+private suspend fun emitLink(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
+    val quality = when {
+        url.contains("1080", true) -> 1080
+        url.contains("720", true) -> 720
+        url.contains("360", true) -> 360
+        else -> 0
+    }
+    val type = if (url.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+    callback.invoke(
+        newExtractorLink(
+            source = "HQPorner",
+            name = "HQPorner ${if (quality > 0) "${quality}p" else "Stream"}",
+            url = url,
+            type = type
+        ) {
+            this.referer = referer
+            this.quality = quality
+            this.headers = baseHeaders.toMutableMap().apply { remove("Referer") }
+        }
+    )
+}
 
     data class LoadUrl(
         val href: String,
