@@ -153,38 +153,48 @@ class HQPornerProvider : MainAPI() {
         return false
     }
 
-    private suspend fun extractVideoFromText(
+   private suspend fun extractVideoFromText(
     text: String,
     referer: String,
     callback: (ExtractorLink) -> Unit
 ): Boolean {
-    // Find all potential mp4/m3u8 URLs (protocol-relative or absolute)
-    val urlPattern = Regex("""((?:https?:)?//[^\s"']+?\.(?:mp4|m3u8)[^\s"']*)""", RegexOption.IGNORE_CASE)
-    val allMatches = urlPattern.findAll(text)
-
-    // Collect all valid URLs, cleaning up trailing junk like backslashes or escaped quotes
-    val links = allMatches
+    // Find all potential mp4/m3u8 URLs, clean them up
+    val urlPattern = Regex("""((?:https?:)?//[^\s"'\\]+?\.(?:mp4|m3u8))[^\s"']*""", RegexOption.IGNORE_CASE)
+    val rawLinks = urlPattern.findAll(text)
         .map { it.groupValues[1] }
-        .map { url ->
-            url.trimEnd('\\', '"', '\'', ',', ';')  // remove trailing escape chars
-        }
+        .map { it.trimEnd('\\', '"', '\'', ',', ';') }
         .filter { it.startsWith("http") || it.startsWith("//") }
         .map { if (it.startsWith("//")) "https:$it" else it }
         .distinct()
         .toList()
 
-    if (links.isEmpty()) return false
+    if (rawLinks.isEmpty()) return false
 
-    // Pick the best quality based on resolution in the URL
-    val bestUrl = links.maxByOrNull { extractQuality(it) } ?: links.first()
-    debug("FOUND_BEST", "$bestUrl (${extractQuality(bestUrl)}p)")
+    // Group by detected quality – keep one URL per quality
+    val bestPerQuality = mutableMapOf<Int, String>()
+    for (url in rawLinks) {
+        val q = extractQuality(url)
+        // If we haven't seen this quality, or the new URL looks simpler (shorter), keep it
+        if (bestPerQuality[q] == null || url.length < bestPerQuality[q]!!.length) {
+            bestPerQuality[q] = url
+        }
+    }
 
-    emitLink(bestUrl, referer, callback, extractQuality(bestUrl))
+    if (bestPerQuality.isEmpty()) return false
+
+    // Emit links sorted from highest to lowest quality
+    bestPerQuality.entries
+        .sortedByDescending { it.key }
+        .forEach { (quality, url) ->
+            debug("FOUND", "$url (${quality}p)")
+            emitLink(url, referer, callback, quality)
+        }
+
     return true
 }
 
-// Extract numeric quality from a URL like ".../1080.mp4"
 private fun extractQuality(url: String): Int {
+    // Matches /1080p.mp4 or /1080.mp4
     val match = Regex("""/(\d{3,4})p?\.mp4""").find(url)
     return match?.groupValues?.get(1)?.toIntOrNull() ?: when {
         url.contains("1080") -> 1080
@@ -201,7 +211,6 @@ private suspend fun emitLink(
     quality: Int = 0
 ) {
     val type = if (url.contains(".m3u8", true)) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-    debug("LINK", "$url (${quality}p)")
     callback.invoke(
         newExtractorLink(
             source = "HQPorner",
