@@ -161,7 +161,8 @@ class HQPornerProvider : MainAPI() {
         return false
     }
 
-    private fun extractVideoFromText(
+    // Now a suspend function – can call emitLink which uses newExtractorLink
+    private suspend fun extractVideoFromText(
         text: String,
         referer: String,
         callback: (ExtractorLink) -> Unit
@@ -197,7 +198,8 @@ class HQPornerProvider : MainAPI() {
         return false
     }
 
-    private fun emitLink(
+    // Changed to suspend function
+    private suspend fun emitLink(
         url: String,
         referer: String,
         callback: (ExtractorLink) -> Unit,
