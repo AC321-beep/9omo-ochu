@@ -23,72 +23,42 @@ open class Xtremestream : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         val html = fetchHtml(url, referer) ?: return
-        val links = mutableListOf<ExtractorLink>()
+        var iframeUrl: String? = null
 
-        // 1. Try to extract from the main page directly (legacy, works for some pages)
-        val directLinks = extractLinksFromHtml(html, url, referer)
-        if (directLinks.isNotEmpty()) {
-            // If we found links directly, use them (this covers the working case)
-            directLinks.forEach { callback.invoke(it) }
-            return
-        }
+        var links = extractLinksFromHtml(html, url, referer).toMutableList()
 
-        // 2. If no direct links, try to find and use an iframe
-        val iframeInfo = extractIframeInfo(html, url)
-        if (iframeInfo != null) {
-            val (iframeUrl, _) = iframeInfo
-            // Fetch the iframe HTML (use the iframe URL as referer)
-            val iframeHtml = fetchHtml(iframeUrl, iframeUrl)
-            if (iframeHtml != null) {
-                // Extract links from the iframe content
-                val iframeLinks = extractLinksFromHtml(iframeHtml, iframeUrl, iframeUrl)
-                if (iframeLinks.isNotEmpty()) {
-                    iframeLinks.forEach { callback.invoke(it) }
-                    return
+        if (links.isEmpty()) {
+            val extractedIframeUrl = extractIframeUrl(html, url)
+            if (extractedIframeUrl != null) {
+                iframeUrl = extractedIframeUrl
+                val iframeHtml = fetchHtml(extractedIframeUrl, url)
+                if (iframeHtml != null) {
+                    links = extractLinksFromHtml(iframeHtml, extractedIframeUrl, extractedIframeUrl).toMutableList()
                 }
             }
         }
 
-        // 3. Last resort: if iframe extraction failed, fallback to guessing using data parameter
+        // Enhanced fallback: try to guess manifest from data parameter with more patterns
         if (links.isEmpty()) {
             val dataParam = url.substringAfter("data=").takeIf { it != url }?.substringBefore("&")
+                ?: iframeUrl?.substringAfter("data=")?.substringBefore("&")
                 ?: html.substringAfter("data=").takeIf { it != html }?.substringBefore("\"")
+
             if (!dataParam.isNullOrBlank()) {
-                val baseUrl = if (iframeInfo != null) {
-                    // Use the iframe's base domain
-                    try {
-                        URI(iframeInfo.first).resolve("/").toString().dropLast(1)
-                    } catch (e: Exception) {
-                        iframeInfo.first.substringBefore("/player/")
-                    }
-                } else {
-                    url.substringBefore("/player/")
-                }
-                // Try the known working pattern
-                val resolutions = listOf(1080, 720, 480)
-                for (res in resolutions) {
-                    links.add(
-                        newExtractorLink(
-                            name,
-                            name,
-                            "$baseUrl/api/video/$dataParam&q=$res",
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.quality = res
-                            this.referer = iframeInfo?.first ?: url
-                            this.headers = mapOf(
-                                "Referer" to (iframeInfo?.first ?: url),
-                                "User-Agent" to USER_AGENT
-                            )
-                        }
-                    )
-                }
-                // Also try alternative paths
-                listOf(
+                val baseUrl = if (iframeUrl != null) iframeUrl!!.substringBefore("/player/")
+                              else url.substringBefore("/player/")
+                // Try multiple common patterns
+                val patterns = listOf(
+                    "$baseUrl/api/video/$dataParam/master.m3u8",
                     "$baseUrl/api/manifest/$dataParam",
                     "$baseUrl/manifest/$dataParam.m3u8",
-                    "$baseUrl/video/$dataParam.m3u8"
-                ).forEach { manifestUrl ->
+                    "$baseUrl/video/$dataParam.m3u8",
+                    "$baseUrl/playlist/$dataParam.m3u8",
+                    "$baseUrl/stream/$dataParam.m3u8",
+                    "$baseUrl/api/stream/$dataParam",
+                    "$baseUrl/get/$dataParam.m3u8"
+                )
+                for (manifestUrl in patterns) {
                     links.add(
                         newExtractorLink(
                             name,
@@ -96,10 +66,10 @@ open class Xtremestream : ExtractorApi() {
                             manifestUrl,
                             type = ExtractorLinkType.M3U8
                         ) {
+                            this.referer = url
                             this.quality = 0
-                            this.referer = iframeInfo?.first ?: url
                             this.headers = mapOf(
-                                "Referer" to (iframeInfo?.first ?: url),
+                                "Referer" to url,
                                 "User-Agent" to USER_AGENT
                             )
                         }
@@ -108,7 +78,6 @@ open class Xtremestream : ExtractorApi() {
             }
         }
 
-        // Submit all found links
         links.forEach { callback.invoke(it) }
     }
 
@@ -122,24 +91,17 @@ open class Xtremestream : ExtractorApi() {
         return client.newCall(request).execute().body?.string()
     }
 
-    private fun extractIframeInfo(html: String, baseUrl: String): Pair<String, String>? {
+    private fun extractIframeUrl(html: String, baseUrl: String): String? {
         val doc = Jsoup.parse(html)
-        val iframe = doc.selectFirst("iframe[src*='player/index.php?data=']") ?: return null
-        val src = iframe.attr("src")
-        val fullUrl = try {
+        val iframe = doc.selectFirst("iframe[src*='player/index.php?data=']")
+        val src = iframe?.attr("src") ?: return null
+        return try {
             URI(baseUrl).resolve(src).toString()
         } catch (e: Exception) {
             src
         }
-        val dataParam = fullUrl.substringAfter("data=").substringBefore("&")
-            .takeIf { it.isNotBlank() } ?: return null
-        return Pair(fullUrl, dataParam)
     }
 
-    /**
-     * Core extraction logic: looks for var video_id and m3u8_loader_url in <script> tags.
-     * This is the same method that works for the original working pages.
-     */
     private suspend fun extractLinksFromHtml(
         html: String,
         pageUrl: String,
@@ -147,14 +109,16 @@ open class Xtremestream : ExtractorApi() {
     ): List<ExtractorLink> {
         val links = mutableListOf<ExtractorLink>()
 
-        // Look for var video_id and m3u8_loader_url in any script
-        val scriptRegex = Regex("""<script[^>]*>([\s\S]*?)</script>""")
-        for (scriptMatch in scriptRegex.findAll(html)) {
-            val scriptContent = scriptMatch.groupValues[1]
+        // ----- Method 1: original pattern (var video_id) – unchanged (works for some pages) -----
+        val playerScript =
+            Jsoup.parse(html).selectXpath("//script[contains(text(),'var video_id')]")
+                .html()
+        if (playerScript.isNotBlank()) {
+            // Use regex for robustness
             val videoIdRegex = Regex("""video_id\s*=\s*["'`](\w+)["'`]""")
             val loaderRegex = Regex("""m3u8_loader_url\s*=\s*["'`]([^"']+)["'`]""")
-            val videoIdMatch = videoIdRegex.find(scriptContent)
-            val loaderMatch = loaderRegex.find(scriptContent)
+            val videoIdMatch = videoIdRegex.find(playerScript)
+            val loaderMatch = loaderRegex.find(playerScript)
             if (videoIdMatch != null && loaderMatch != null) {
                 val videoId = videoIdMatch.groupValues[1]
                 var m3u8LoaderUrl = loaderMatch.groupValues[1]
@@ -184,30 +148,32 @@ open class Xtremestream : ExtractorApi() {
                         }
                     )
                 }
-                return links // Success – return immediately
+                return links
             }
         }
 
-        // If the above didn't work, try other methods (less likely but keep for compatibility)
-        // Method 2: direct video URLs
+        // ----- Method 2: <video> / <source> tags + regex (unchanged) -----
         val doc = Jsoup.parse(html)
         val videoUrls = mutableListOf<String>()
-        doc.select("video source").forEach { source ->
+
+        val videoSources = doc.select("video source")
+        videoSources.forEach { source ->
             val src = source.attr("src")
             if (src.isNotBlank()) videoUrls.add(src)
         }
-        doc.selectFirst("video")?.let {
+        val videoTag = doc.selectFirst("video")
+        videoTag?.let {
             val src = it.attr("src")
             if (src.isNotBlank()) videoUrls.add(src)
         }
-        Regex("""(https?://[^\s"']+\.(mp4|m3u8))""")
-            .findAll(html)
-            .forEach { match ->
-                val videoUrl = match.groupValues[1]
-                if (videoUrl.isNotBlank() && !videoUrls.contains(videoUrl)) {
-                    videoUrls.add(videoUrl)
-                }
+
+        val regex = Regex("""(https?://[^\s"']+\.(mp4|m3u8))""")
+        regex.findAll(html).forEach { match ->
+            val videoUrl = match.groupValues[1]
+            if (videoUrl.isNotBlank() && !videoUrls.contains(videoUrl)) {
+                videoUrls.add(videoUrl)
             }
+        }
 
         if (videoUrls.isNotEmpty()) {
             for (videoUrl in videoUrls) {
@@ -231,13 +197,16 @@ open class Xtremestream : ExtractorApi() {
             return links
         }
 
-        // Method 3: JSON configs
+        // ----- Method 3: JSON config inside scripts – expanded patterns -----
         val jsonPatterns = listOf(
             Regex(""""file"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
             Regex(""""src"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
             Regex(""""url"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
             Regex(""""source"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
-            Regex(""""video"\s*:\s*"([^"]+\.(mp4|m3u8))""")
+            Regex(""""video"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
+            Regex(""""video_url"\s*:\s*"([^"]+\.(mp4|m3u8))"""),  // added
+            Regex(""""hls_url"\s*:\s*"([^"]+\.(mp4|m3u8))"""),     // added
+            Regex(""""stream"\s*:\s*"([^"]+\.(mp4|m3u8))""")       // added
         )
         for (pattern in jsonPatterns) {
             for (match in pattern.findAll(html)) {
@@ -267,6 +236,38 @@ open class Xtremestream : ExtractorApi() {
                     )
                     return links
                 }
+            }
+        }
+
+        // ----- Additional fallback: find any m3u8 URL (including relative) in the entire HTML -----
+        val anyM3u8Regex = Regex("""(?:https?://[^\s"']+|/[^\s"']+)\.m3u8[^\s"']*""")
+        for (match in anyM3u8Regex.findAll(html)) {
+            var url = match.value
+            if (!url.startsWith("http")) {
+                url = try {
+                    URI(pageUrl).resolve(url).toString()
+                } catch (e: Exception) {
+                    url
+                }
+            }
+            if (url.isNotBlank() && url.contains(".m3u8")) {
+                links.add(
+                    newExtractorLink(
+                        name,
+                        name,
+                        url,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = pageUrl
+                        this.quality = guessQuality(url)
+                        this.headers = mapOf(
+                            "Referer" to pageUrl,
+                            "User-Agent" to USER_AGENT
+                        )
+                    }
+                )
+                // Return on first match (or we could collect all)
+                return links
             }
         }
 
