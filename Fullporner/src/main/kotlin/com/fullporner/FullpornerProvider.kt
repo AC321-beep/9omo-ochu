@@ -67,35 +67,33 @@ class FullPorner : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-    val document = app.get(url).document
+        val document = app.get(url).document
 
-    val title = document.selectFirst("div.video-block div.single-video-left div.single-video-title h2")?.text()?.trim().toString()
+        val title = document.selectFirst("div.video-block div.single-video-left div.single-video-title h2")?.text()?.trim().toString()
 
-    val iframeUrl = fixUrlNull(document.selectFirst("div.video-block div.single-video-left div.single-video iframe")?.attr("src")) ?: ""
+        val iframeUrl = fixUrlNull(document.selectFirst("div.video-block div.single-video-left div.single-video iframe")?.attr("src")) ?: ""
 
-    val iframeDocument = app.get(iframeUrl).document
+        val iframeDocument = app.get(iframeUrl).document
 
-    val videoID = Regex("""var id = \"(.+?)\"""").find(iframeDocument.html())?.groupValues?.get(1)
-    val pornTrexDocument = app.get("https://www.porntrex.com/embed/${videoID}").document
-    val matchResult = Regex("""preview_url:\s*'([^']+)'""").find(pornTrexDocument.html())
-    val poster = matchResult?.groupValues?.get(1)
-    val posterUrl = fixUrlNull("https:$poster")
+        val videoID = Regex("""var id = \"(.+?)\"""").find(iframeDocument.html())?.groupValues?.get(1)
+        val pornTrexDocument = app.get("https://www.porntrex.com/embed/${videoID}").document
+        val matchResult = Regex("""preview_url:\s*'([^']+)'""").find(pornTrexDocument.html())
+        val poster = matchResult?.groupValues?.get(1)
+        val posterUrl = fixUrlNull("https:$poster")
 
+        val tags = document.select("div.video-block div.single-video-left div.single-video-title p.tag-link span a").map { it.text() }
+        val description = document.selectFirst("div.video-block div.single-video-left div.single-video-title h2")?.text()?.trim().toString()
+        val actors = document.select("div.video-block div.single-video-left div.single-video-info-content p a").map { it.text() }
+        val recommendations = document.select("div.video-block div.video-recommendation div.video-card").mapNotNull { it.toSearchResult() }
 
-
-    val tags = document.select("div.video-block div.single-video-left div.single-video-title p.tag-link span a").map { it.text() }
-    val description = document.selectFirst("div.video-block div.single-video-left div.single-video-title h2")?.text()?.trim().toString()
-    val actors = document.select("div.video-block div.single-video-left div.single-video-info-content p a").map { it.text() }
-    val recommendations = document.select("div.video-block div.video-recommendation div.video-card").mapNotNull { it.toSearchResult() }
-
-    return newMovieLoadResponse(title, url, TvType.NSFW, url) {
-        this.posterUrl = posterUrl
-        this.plot = description
-        this.tags = tags
-        this.recommendations = recommendations
-        addActors(actors)
+        return newMovieLoadResponse(title, url, TvType.NSFW, url) {
+            this.posterUrl = posterUrl
+            this.plot = description
+            this.tags = tags
+            this.recommendations = recommendations
+            addActors(actors)
+        }
     }
-}
 
     override suspend fun loadLinks(
         data: String,
@@ -104,37 +102,62 @@ class FullPorner : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val document = app.get(data).document
-        val iframeUrl = fixUrlNull(document.selectFirst("div.video-block div.single-video-left div.single-video iframe")?.attr("src")) ?: ""
+        val iframeUrl = fixUrlNull(document.selectFirst("div.video-block div.single-video-left div.single-video iframe")?.attr("src")) ?: return false
         val iframeDocument = app.get(iframeUrl).document
-        val videoID = Regex("""var id = \"(.+?)\"""").find(iframeDocument.html())?.groupValues?.getOrNull(1)
+        val videoID = Regex("""var id = \"(.+?)\"""", RegexOption.IGNORE_CASE)
+            .find(iframeDocument.html())?.groupValues?.getOrNull(1)
 
-        if (videoID != null) {
-            val pornTrexDocument = app.get("https://www.porntrex.com/embed/$videoID").document
-            val videoUrlsRegex = Regex("""(?:video_url|video_alt_url2|video_alt_url3): \'(.+?)\',""")
-            val matchResults = videoUrlsRegex.findAll(pornTrexDocument.html())
+        if (videoID.isNullOrBlank()) {
+            logError("FullPorner: Could not extract porntrex video ID from $iframeUrl")
+            return false
+        }
 
-            val videoUrls = matchResults.map { it.groupValues[1] }.toList()
+        val embedUrl = "https://www.porntrex.com/embed/$videoID"
+        val embedDoc = app.get(embedUrl).document
 
-            videoUrls.forEach { videoUrl ->
-                try {
-                    callback.invoke(
-                        newExtractorLink(
-                            name,
-                            name,
-                            videoUrl,
-                        ).apply {
-                            this.quality =
-                                Regex("""_(1080|720|480|360)p\.mp4""").find(videoUrl)?.groupValues?.getOrNull(
-                                    1
-                                )?.toIntOrNull() ?: Qualities.Unknown.value
-                        }
-                    )
-                }
-                catch (e: Exception) {
-                    logError(e)
-                }
+        // Updated extraction: try multiple patterns that Porntrex embed pages commonly use
+        val videoUrls = mutableListOf<String>()
+
+        // Pattern 1: sources array (most common now)
+        val sourcesRegex = Regex("""sources\s*:\s*\[.*?"file"\s*:\s*"([^"]+)""", RegexOption.IGNORE_CASE)
+        val sourcesMatch = sourcesRegex.findAll(embedDoc.html())
+        videoUrls.addAll(sourcesMatch.map { it.groupValues[1] }.filter { it.isNotBlank() })
+
+        // Pattern 2: direct video_url variables (old method)
+        if (videoUrls.isEmpty()) {
+            val varRegex = Regex("""(?:video_url|video_alt_url2|video_alt_url3)\s*:\s*'([^']+)'""", RegexOption.IGNORE_CASE)
+            val varMatch = varRegex.findAll(embedDoc.html())
+            videoUrls.addAll(varMatch.map { it.groupValues[1] }.filter { it.isNotBlank() })
+        }
+
+        // Pattern 3: standalone file: '...'
+        if (videoUrls.isEmpty()) {
+            val fileRegex = Regex("""file\s*:\s*'([^']+)'""", RegexOption.IGNORE_CASE)
+            val fileMatch = fileRegex.findAll(embedDoc.html())
+            videoUrls.addAll(fileMatch.map { it.groupValues[1] }.filter { it.isNotBlank() })
+        }
+
+        if (videoUrls.isEmpty()) {
+            logError("FullPorner: No video URLs found in $embedUrl")
+            return false
+        }
+
+        // Quality detection from filename (e.g., _1080p.mp4)
+        val qualityRegex = Regex("""_(\d{3,4})p""")
+
+        videoUrls.forEach { videoUrl ->
+            try {
+                val quality = qualityRegex.find(videoUrl)?.groupValues?.get(1)?.toIntOrNull() ?: Qualities.Unknown.value
+                callback.invoke(
+                    newExtractorLink(name, name, videoUrl).apply {
+                        this.quality = quality
+                    }
+                )
+            } catch (e: Exception) {
+                logError(e)
             }
         }
+
         return true
     }
 }
