@@ -1,9 +1,9 @@
 cloudstream {
-    description = "Donghua (Multi-Source)"
+    description = "FullPorner"
     authors = listOf("AC321-beep")
     status = 1
-    tvTypes = listOf("Anime")
-    language = "zh"
-    version = 10
-    iconUrl = "https://donghuastream.org/wp-content/uploads/2023/05/Donghua-Stream--1024x1024.jpeg"
+    tvTypes = listOf("NSFW")
+    language = "en"
+    version = 1
+    iconUrl = "https://fullporner.com/favicon.ico"
 }
