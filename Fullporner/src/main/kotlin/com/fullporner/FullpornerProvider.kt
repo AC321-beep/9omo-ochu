@@ -95,7 +95,7 @@ class FullPorner : MainAPI() {
         }
     }
 
-    override suspend fun loadLinks(
+   override suspend fun loadLinks(
     data: String,
     isCasting: Boolean,
     subtitleCallback: (SubtitleFile) -> Unit,
@@ -106,23 +106,16 @@ class FullPorner : MainAPI() {
         ?.attr("src") ?: return false
     val iframeUrl = fixUrl(rawIframeSrc)
 
-    // Fetch the iframe page (xiaoshenke.net)
     val iframeDoc = app.get(iframeUrl, referer = data).document
     val html = iframeDoc.html()
 
-    // 1. Extract the reversed ID and reverse it back
     val reversedId = Regex("""var id\s*=\s*"([^"]+)"""").find(html)?.groupValues?.getOrNull(1)
-        ?: run {
-            logError(Exception("FullPorner: Could not find var id"))
-            return false
-        }
-    val realId = reversedId.reversed()   // "a2d8de383c3a6" -> "6a3c383ed8d2a"
+        ?: run { logError(Exception("FullPorner: Could not find var id")); return false }
+    val realId = reversedId.reversed()
 
-    // 2. Extract quality mask (binary)
     val qualityMaskStr = Regex("""var quality\s*=\s*parseInt\("(\d+)"\)""").find(html)?.groupValues?.getOrNull(1)
     val qualityMask = qualityMaskStr?.toIntOrNull() ?: 4
 
-    // 3. Decode quality mask using the same logic as the page's btq() function
     val qualities = mutableListOf<Int>()
     if (qualityMask and 1 == 1) qualities.add(360)
     if (qualityMask and 2 == 2) qualities.add(480)
@@ -134,23 +127,21 @@ class FullPorner : MainAPI() {
         return false
     }
 
-    // 4. Get the hostname from the iframe URL
-    val host = URI(iframeUrl).host ?: return false
+    // Extract host from iframe URL (e.g. "https://xiaoshenke.net/..." → "xiaoshenke.net")
+    val host = iframeUrl.substringAfter("://").substringBefore("/")
+    if (host.isBlank()) return false
 
-    // 5. Build video URLs for each quality (both normal and backup)
     val videoUrls = mutableListOf<String>()
     for (q in qualities) {
         videoUrls.add("https://$host/vid/$realId/$q")
-        videoUrls.add("https://$host/vid/$realId/$q/b")   // backup URL (appended '/b')
+        videoUrls.add("https://$host/vid/$realId/$q/b")   // backup URL
     }
 
-    // Send them to the player
     videoUrls.forEach { videoUrl ->
         try {
             callback.invoke(
                 newExtractorLink(name, name, videoUrl).apply {
-                    this.quality = qualities.firstOrNull() ?: Qualities.Unknown.value
-                    // We can set more accurate quality by parsing the URL, but for now it's fine
+                    this.quality = Qualities.Unknown.value
                 }
             )
         } catch (e: Exception) {
