@@ -124,16 +124,16 @@ class FullPorner : MainAPI() {
 
         val allUrls = (videoUrls + altVideoUrls + embedVideoUrls).distinct()
 
-        if (allUrls.isEmpty()) {
-            try {
-                val page = app.get(iframeUrl).document.html()
-                val snippet = page.take(2000)
-                logError(Exception("FullPorner: No video URLs found. Iframe page excerpt:\n$snippet"))
-            } catch (e: Exception) {
-                logError(e)
-            }
-            return false
-        }
+       if (allUrls.isEmpty()) {
+    try {
+        val page = app.get(iframeUrl).document.html()
+        // Log the COMPLETE page – not truncated
+        logError(Exception("FullPorner: No video URLs found. Full iframe page:\n$page"))
+    } catch (e: Exception) {
+        logError(e)
+    }
+    return false
+}
 
         val qualityRegex = Regex("""_(\d{3,4})p""")
         allUrls.forEach { videoUrl ->
