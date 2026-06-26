@@ -102,45 +102,41 @@ class FullPorner : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val document = app.get(data).document
-        val iframeUrl = fixUrlNull(document.selectFirst("div.video-block div.single-video-left div.single-video iframe")?.attr("src")) ?: return false
-        val iframeDocument = app.get(iframeUrl).document
-        val videoID = Regex("""var id = \"(.+?)\"""", RegexOption.IGNORE_CASE)
-            .find(iframeDocument.html())?.groupValues?.getOrNull(1)
+        val rawIframeSrc = document.selectFirst("div.video-block div.single-video-left div.single-video iframe")
+            ?.attr("src") ?: return false
 
-        if (videoID.isNullOrBlank()) {
-            logError(Exception("FullPorner: Could not extract porntrex video ID from $iframeUrl"))
-            return false
-        }
+        val iframeUrl = fixUrl(rawIframeSrc)  // Converts //xiaoshenke.net/... to https://...
 
-        val embedUrl = "https://www.porntrex.com/embed/$videoID"
-        val embedDoc = app.get(embedUrl).document
+        val videoUrls = tryExtractFromPage(iframeUrl, data)
 
-        val videoUrls = mutableListOf<String>()
+        val altVideoUrls = if (videoUrls.isEmpty()) {
+            val altUrl = iframeUrl.replace(Regex("/\\d+$"), "")   // removes trailing /4
+            tryExtractFromPage(altUrl, data)
+        } else emptyList()
 
-        // Modern sources array
-        val sourcesRegex = Regex("""sources\s*:\s*\[.*?"file"\s*:\s*"([^"]+)""", RegexOption.IGNORE_CASE)
-        videoUrls.addAll(sourcesRegex.findAll(embedDoc.html()).map { it.groupValues[1] }.filter { it.isNotBlank() })
+        val embedVideoUrls = if (videoUrls.isEmpty() && altVideoUrls.isEmpty()) {
+            val id = Regex("/video/([^/]+)").find(iframeUrl)?.groupValues?.getOrNull(1)
+            if (!id.isNullOrBlank()) {
+                val embedUrl = iframeUrl.substringBefore("/video/") + "/embed/$id"
+                tryExtractFromPage(embedUrl, data)
+            } else emptyList()
+        } else emptyList()
 
-        // Legacy direct variables
-        if (videoUrls.isEmpty()) {
-            val varRegex = Regex("""(?:video_url|video_alt_url2|video_alt_url3)\s*:\s*'([^']+)'""", RegexOption.IGNORE_CASE)
-            videoUrls.addAll(varRegex.findAll(embedDoc.html()).map { it.groupValues[1] }.filter { it.isNotBlank() })
-        }
+        val allUrls = (videoUrls + altVideoUrls + embedVideoUrls).distinct()
 
-        // Standalone file: '...'
-        if (videoUrls.isEmpty()) {
-            val fileRegex = Regex("""file\s*:\s*'([^']+)'""", RegexOption.IGNORE_CASE)
-            videoUrls.addAll(fileRegex.findAll(embedDoc.html()).map { it.groupValues[1] }.filter { it.isNotBlank() })
-        }
-
-        if (videoUrls.isEmpty()) {
-            logError(Exception("FullPorner: No video URLs found in $embedUrl"))
+        if (allUrls.isEmpty()) {
+            try {
+                val page = app.get(iframeUrl).document.html()
+                val snippet = page.take(2000)
+                logError(Exception("FullPorner: No video URLs found. Iframe page excerpt:\n$snippet"))
+            } catch (e: Exception) {
+                logError(e)
+            }
             return false
         }
 
         val qualityRegex = Regex("""_(\d{3,4})p""")
-
-        videoUrls.forEach { videoUrl ->
+        allUrls.forEach { videoUrl ->
             try {
                 val quality = qualityRegex.find(videoUrl)?.groupValues?.get(1)?.toIntOrNull() ?: Qualities.Unknown.value
                 callback.invoke(
@@ -154,5 +150,33 @@ class FullPorner : MainAPI() {
         }
 
         return true
+    }
+
+    // Helper to fetch a page and extract video URLs using multiple patterns
+    private suspend fun tryExtractFromPage(url: String, referer: String): List<String> {
+        return try {
+            val doc = app.get(url, referer = referer).document
+            val html = doc.html()
+
+            val patterns = listOf(
+                """file\s*:\s*["'](https?://[^"']+\.(?:mp4|m3u8)[^"']*)["']""",
+                """"file"\s*:\s*"(https?://[^"]+\.(?:mp4|m3u8))"""",
+                """video_url\s*:\s*['"]([^'"]+)['"]""",
+                """src\s*:\s*['"](https?://[^"']+\.(?:mp4|m3u8))['"]""",
+                """<source\s+src=["']([^"']+\.(?:mp4|m3u8))["']""",
+                """(https?://[^"'\s]+\.(?:mp4|m3u8))""",
+            )
+
+            for (pattern in patterns) {
+                val regex = Regex(pattern, setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+                val matches = regex.findAll(html).map { it.groupValues[1] }.filter { it.isNotBlank() }.toList()
+                if (matches.isNotEmpty()) return matches
+            }
+
+            emptyList()
+        } catch (e: Exception) {
+            logError(e)
+            emptyList()
+        }
     }
 }
