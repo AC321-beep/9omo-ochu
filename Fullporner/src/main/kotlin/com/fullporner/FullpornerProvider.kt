@@ -96,62 +96,70 @@ class FullPorner : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        val document = app.get(data).document
-        val rawIframeSrc = document.selectFirst("div.video-block div.single-video-left div.single-video iframe")
-            ?.attr("src") ?: return false
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    val document = app.get(data).document
+    val rawIframeSrc = document.selectFirst("div.video-block div.single-video-left div.single-video iframe")
+        ?.attr("src") ?: return false
+    val iframeUrl = fixUrl(rawIframeSrc)
 
-        val iframeUrl = fixUrl(rawIframeSrc)  // Converts //xiaoshenke.net/... to https://...
+    // Fetch the iframe page (xiaoshenke.net)
+    val iframeDoc = app.get(iframeUrl, referer = data).document
+    val html = iframeDoc.html()
 
-        val videoUrls = tryExtractFromPage(iframeUrl, data)
-
-        val altVideoUrls = if (videoUrls.isEmpty()) {
-            val altUrl = iframeUrl.replace(Regex("/\\d+$"), "")   // removes trailing /4
-            tryExtractFromPage(altUrl, data)
-        } else emptyList()
-
-        val embedVideoUrls = if (videoUrls.isEmpty() && altVideoUrls.isEmpty()) {
-            val id = Regex("/video/([^/]+)").find(iframeUrl)?.groupValues?.getOrNull(1)
-            if (!id.isNullOrBlank()) {
-                val embedUrl = iframeUrl.substringBefore("/video/") + "/embed/$id"
-                tryExtractFromPage(embedUrl, data)
-            } else emptyList()
-        } else emptyList()
-
-        val allUrls = (videoUrls + altVideoUrls + embedVideoUrls).distinct()
-
-       if (allUrls.isEmpty()) {
-    try {
-        val page = app.get(iframeUrl).document.html()
-        // Log the COMPLETE page – not truncated
-        logError(Exception("FullPorner: No video URLs found. Full iframe page:\n$page"))
-    } catch (e: Exception) {
-        logError(e)
-    }
-    return false
-}
-
-        val qualityRegex = Regex("""_(\d{3,4})p""")
-        allUrls.forEach { videoUrl ->
-            try {
-                val quality = qualityRegex.find(videoUrl)?.groupValues?.get(1)?.toIntOrNull() ?: Qualities.Unknown.value
-                callback.invoke(
-                    newExtractorLink(name, name, videoUrl).apply {
-                        this.quality = quality
-                    }
-                )
-            } catch (e: Exception) {
-                logError(e)
-            }
+    // 1. Extract the reversed ID and reverse it back
+    val reversedId = Regex("""var id\s*=\s*"([^"]+)"""").find(html)?.groupValues?.getOrNull(1)
+        ?: run {
+            logError(Exception("FullPorner: Could not find var id"))
+            return false
         }
+    val realId = reversedId.reversed()   // "a2d8de383c3a6" -> "6a3c383ed8d2a"
 
-        return true
+    // 2. Extract quality mask (binary)
+    val qualityMaskStr = Regex("""var quality\s*=\s*parseInt\("(\d+)"\)""").find(html)?.groupValues?.getOrNull(1)
+    val qualityMask = qualityMaskStr?.toIntOrNull() ?: 4
+
+    // 3. Decode quality mask using the same logic as the page's btq() function
+    val qualities = mutableListOf<Int>()
+    if (qualityMask and 1 == 1) qualities.add(360)
+    if (qualityMask and 2 == 2) qualities.add(480)
+    if (qualityMask and 4 == 4) qualities.add(720)
+    if (qualityMask and 8 == 8) qualities.add(1080)
+
+    if (qualities.isEmpty()) {
+        logError(Exception("FullPorner: No qualities available (mask=$qualityMask)"))
+        return false
     }
 
+    // 4. Get the hostname from the iframe URL
+    val host = URI(iframeUrl).host ?: return false
+
+    // 5. Build video URLs for each quality (both normal and backup)
+    val videoUrls = mutableListOf<String>()
+    for (q in qualities) {
+        videoUrls.add("https://$host/vid/$realId/$q")
+        videoUrls.add("https://$host/vid/$realId/$q/b")   // backup URL (appended '/b')
+    }
+
+    // Send them to the player
+    videoUrls.forEach { videoUrl ->
+        try {
+            callback.invoke(
+                newExtractorLink(name, name, videoUrl).apply {
+                    this.quality = qualities.firstOrNull() ?: Qualities.Unknown.value
+                    // We can set more accurate quality by parsing the URL, but for now it's fine
+                }
+            )
+        } catch (e: Exception) {
+            logError(e)
+        }
+    }
+
+    return true
+}
     // Helper to fetch a page and extract video URLs using multiple patterns
     private suspend fun tryExtractFromPage(url: String, referer: String): List<String> {
         return try {
