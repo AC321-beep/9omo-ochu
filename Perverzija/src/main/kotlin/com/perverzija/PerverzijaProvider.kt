@@ -1,7 +1,22 @@
 package com.perverzija
 
-import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.HomePageList
+import com.lagradost.cloudstream3.HomePageResponse
+import com.lagradost.cloudstream3.LoadResponse
+import com.lagradost.cloudstream3.MainAPI
+import com.lagradost.cloudstream3.MainPageRequest
+import com.lagradost.cloudstream3.SearchResponse
+import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.TvType
+import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.fixUrlNull
+import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.network.CloudflareKiller
+import com.lagradost.cloudstream3.newHomePageResponse
+import com.lagradost.cloudstream3.newMovieLoadResponse
+import com.lagradost.cloudstream3.SearchResponseList
+import com.lagradost.cloudstream3.newSearchResponseList
+import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
@@ -36,34 +51,15 @@ class Perverzija : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        // Keep the original high timeout (100 seconds) so Cloudflare can finish.
-        // A timeout of 60L or 100L is fine; the site is slow.
-        val document = app.get(
-            url = request.data.format(page),
-            interceptor = cfInterceptor,
-            timeout = 100L   // ← same as original, no slowdown
-        ).document
-
+        val document = app.get(request.data.format(page), interceptor = cfInterceptor, timeout = 100L).document
         val home = document.select("div.row div div.post").mapNotNull {
             it.toSearchResult()
         }
 
-        // Option 1: Safe fallback – always show "next page" like original.
-        // (This is what you had before; if the site has no more pages,
-        // CloudStream will just show an empty list and stop.)
-        val hasNext = true
-
-        // Option 2: If you want to test dynamic detection, uncomment below
-        // and verify the selector works on paginated URLs.
-        // val hasNext = document.selectFirst("a.next.page-numbers") != null
-
         return newHomePageResponse(
             list = HomePageList(
-                name = request.name,
-                list = home,
-                isHorizontalImages = true
-            ),
-            hasNext = hasNext
+                name = request.name, list = home, isHorizontalImages = true
+            ), hasNext = true
         )
     }
 
@@ -95,7 +91,7 @@ class Perverzija : MainAPI() {
             .select("div.row div div.post").mapNotNull {
                 it.toSearchResult()
             }.distinctBy { it.url }
-        val hasNext = results.isNotEmpty()
+        val hasNext = if (results.isEmpty()) false else true
         return newSearchResponseList(results, hasNext)
     }
 
@@ -103,13 +99,17 @@ class Perverzija : MainAPI() {
         val document = app.get(url, interceptor = cfInterceptor).document
         val poster = document.select("div#featured-img-id img").attr("src")
         val title = document.select("div.title-info h1.light-title.entry-title").text()
-        // Slightly faster description (no StringBuilder overhead)
-        val description = document.select("div.item-content p")
-            .joinToString("\n") { it.text() }
+        val pTags = document.select("div.item-content p")
+        val description = StringBuilder().apply {
+            pTags.forEach {
+                append(it.text())
+            }
+        }.toString()
         val tags = document.select("div.item-tax-list div a").map { it.text() }
-        val recommendations = document.select("div.related-gallery dl.gallery-item").mapNotNull {
-            it.toRecommendationResult()
-        }
+        val recommendations =
+            document.select("div.related-gallery dl.gallery-item").mapNotNull {
+                it.toRecommendationResult()
+            }
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.plot = description
@@ -132,10 +132,13 @@ class Perverzija : MainAPI() {
             return false
         }
 
+        // Stage 1: Try CloudStream's built‑in extractor on the main video page URL.
+        // This often works because the page contains the player embed information.
         if (loadExtractor(data, subtitleCallback, callback)) {
             return true
         }
 
+        // Stage 2: Try our custom extractor on the iframe URL.
         var linkFound = false
         val wrapperCallback: (ExtractorLink) -> Unit = { link ->
             linkFound = true
@@ -146,6 +149,7 @@ class Perverzija : MainAPI() {
             return true
         }
 
+        // Stage 3: Fallback to loadExtractor on the iframe URL.
         return loadExtractor(iframeUrl, subtitleCallback, callback)
     }
 }
