@@ -1,22 +1,8 @@
 package com.perverzija
 
-import com.lagradost.cloudstream3.HomePageList
-import com.lagradost.cloudstream3.HomePageResponse
-import com.lagradost.cloudstream3.LoadResponse
-import com.lagradost.cloudstream3.MainAPI
-import com.lagradost.cloudstream3.MainPageRequest
-import com.lagradost.cloudstream3.SearchResponse
-import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.TvType
+import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.fixUrlNull
-import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.network.CloudflareKiller
-import com.lagradost.cloudstream3.newHomePageResponse
-import com.lagradost.cloudstream3.newMovieLoadResponse
-import com.lagradost.cloudstream3.SearchResponseList
-import com.lagradost.cloudstream3.newSearchResponseList
-import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
@@ -51,15 +37,29 @@ class Perverzija : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val document = app.get(request.data.format(page), interceptor = cfInterceptor, timeout = 100L).document
+        // 1. Use a realistic timeout (15 seconds) and enable caching (5 minutes).
+        //    This prevents premature failures and avoids repeated network calls.
+        val document = app.get(
+            url = request.data.format(page),
+            interceptor = cfInterceptor,
+            timeout = 15_000L,       // 15 seconds in milliseconds
+            cacheTime = 5 * 60       // 5 minutes cache per URL
+        ).document
+
         val home = document.select("div.row div div.post").mapNotNull {
             it.toSearchResult()
         }
 
+        // 2. Detect if there is actually a next page – avoids unnecessary API calls.
+        val hasNext = document.selectFirst("a.next.page-numbers") != null
+
         return newHomePageResponse(
             list = HomePageList(
-                name = request.name, list = home, isHorizontalImages = true
-            ), hasNext = true
+                name = request.name,
+                list = home,
+                isHorizontalImages = true
+            ),
+            hasNext = hasNext
         )
     }
 
@@ -91,7 +91,7 @@ class Perverzija : MainAPI() {
             .select("div.row div div.post").mapNotNull {
                 it.toSearchResult()
             }.distinctBy { it.url }
-        val hasNext = if (results.isEmpty()) false else true
+        val hasNext = results.isNotEmpty()
         return newSearchResponseList(results, hasNext)
     }
 
@@ -99,17 +99,13 @@ class Perverzija : MainAPI() {
         val document = app.get(url, interceptor = cfInterceptor).document
         val poster = document.select("div#featured-img-id img").attr("src")
         val title = document.select("div.title-info h1.light-title.entry-title").text()
-        val pTags = document.select("div.item-content p")
-        val description = StringBuilder().apply {
-            pTags.forEach {
-                append(it.text())
-            }
-        }.toString()
+        // More efficient description builder
+        val description = document.select("div.item-content p")
+            .joinToString("\n") { it.text() }
         val tags = document.select("div.item-tax-list div a").map { it.text() }
-        val recommendations =
-            document.select("div.related-gallery dl.gallery-item").mapNotNull {
-                it.toRecommendationResult()
-            }
+        val recommendations = document.select("div.related-gallery dl.gallery-item").mapNotNull {
+            it.toRecommendationResult()
+        }
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.plot = description
@@ -132,13 +128,10 @@ class Perverzija : MainAPI() {
             return false
         }
 
-        // Stage 1: Try CloudStream's built‑in extractor on the main video page URL.
-        // This often works because the page contains the player embed information.
         if (loadExtractor(data, subtitleCallback, callback)) {
             return true
         }
 
-        // Stage 2: Try our custom extractor on the iframe URL.
         var linkFound = false
         val wrapperCallback: (ExtractorLink) -> Unit = { link ->
             linkFound = true
@@ -149,7 +142,6 @@ class Perverzija : MainAPI() {
             return true
         }
 
-        // Stage 3: Fallback to loadExtractor on the iframe URL.
         return loadExtractor(iframeUrl, subtitleCallback, callback)
     }
 }
