@@ -1,7 +1,6 @@
 package com.perverzija
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
@@ -37,20 +36,18 @@ class Perverzija : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        // 1. Use a realistic timeout (15 seconds) and enable caching (5 minutes).
-        //    This prevents premature failures and avoids repeated network calls.
+        // Realistic timeout in seconds (15s)
         val document = app.get(
             url = request.data.format(page),
             interceptor = cfInterceptor,
-            timeout = 15_000L,       // 15 seconds in milliseconds
-            cacheTime = 5 * 60       // 5 minutes cache per URL
+            timeout = 15L
         ).document
 
         val home = document.select("div.row div div.post").mapNotNull {
             it.toSearchResult()
         }
 
-        // 2. Detect if there is actually a next page – avoids unnecessary API calls.
+        // Detect next page – avoids endless empty requests
         val hasNext = document.selectFirst("a.next.page-numbers") != null
 
         return newHomePageResponse(
@@ -99,7 +96,6 @@ class Perverzija : MainAPI() {
         val document = app.get(url, interceptor = cfInterceptor).document
         val poster = document.select("div#featured-img-id img").attr("src")
         val title = document.select("div.title-info h1.light-title.entry-title").text()
-        // More efficient description builder
         val description = document.select("div.item-content p")
             .joinToString("\n") { it.text() }
         val tags = document.select("div.item-tax-list div a").map { it.text() }
