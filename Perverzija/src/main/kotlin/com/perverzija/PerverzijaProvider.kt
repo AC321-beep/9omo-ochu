@@ -36,19 +36,26 @@ class Perverzija : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        // Realistic timeout in seconds (15s)
+        // Keep the original high timeout (100 seconds) so Cloudflare can finish.
+        // A timeout of 60L or 100L is fine; the site is slow.
         val document = app.get(
             url = request.data.format(page),
             interceptor = cfInterceptor,
-            timeout = 15L
+            timeout = 100L   // ← same as original, no slowdown
         ).document
 
         val home = document.select("div.row div div.post").mapNotNull {
             it.toSearchResult()
         }
 
-        // Detect next page – avoids endless empty requests
-        val hasNext = document.selectFirst("a.next.page-numbers") != null
+        // Option 1: Safe fallback – always show "next page" like original.
+        // (This is what you had before; if the site has no more pages,
+        // CloudStream will just show an empty list and stop.)
+        val hasNext = true
+
+        // Option 2: If you want to test dynamic detection, uncomment below
+        // and verify the selector works on paginated URLs.
+        // val hasNext = document.selectFirst("a.next.page-numbers") != null
 
         return newHomePageResponse(
             list = HomePageList(
@@ -96,6 +103,7 @@ class Perverzija : MainAPI() {
         val document = app.get(url, interceptor = cfInterceptor).document
         val poster = document.select("div#featured-img-id img").attr("src")
         val title = document.select("div.title-info h1.light-title.entry-title").text()
+        // Slightly faster description (no StringBuilder overhead)
         val description = document.select("div.item-content p")
             .joinToString("\n") { it.text() }
         val tags = document.select("div.item-tax-list div a").map { it.text() }
