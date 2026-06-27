@@ -127,20 +127,19 @@ class FullPorner : MainAPI() {
         return false
     }
 
-    // Extract host from iframe URL (e.g. "https://xiaoshenke.net/..." → "xiaoshenke.net")
     val host = iframeUrl.substringAfter("://").substringBefore("/")
     if (host.isBlank()) return false
 
-    val videoUrls = mutableListOf<String>()
+    val videoUrls = mutableListOf<Pair<String, String>>()  // url to referer
     for (q in qualities) {
-        videoUrls.add("https://$host/vid/$realId/$q")
-        videoUrls.add("https://$host/vid/$realId/$q/b")   // backup URL
+        videoUrls.add("https://$host/vid/$realId/$q" to iframeUrl)
+        videoUrls.add("https://$host/vid/$realId/$q/b" to iframeUrl)
     }
 
-    videoUrls.forEach { videoUrl ->
+    videoUrls.forEach { (videoUrl, referer) ->
         try {
             callback.invoke(
-                newExtractorLink(name, name, videoUrl).apply {
+                newExtractorLink(name, name, videoUrl, referer = referer).apply {
                     this.quality = Qualities.Unknown.value
                 }
             )
