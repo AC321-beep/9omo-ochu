@@ -10,11 +10,10 @@ import org.jsoup.Jsoup
 
 open class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
-    override var mainUrl = "https://pervl4.xtremestream.xyz"
+    override var mainUrl = "https://pervl5.xtremestream.xyz"
     override val requiresReferer = true
     private val client = OkHttpClient()
 
-    // Tag for logcat filtering
     private val TAG = "PerverzijaExtractor"
 
     override suspend fun getUrl(
@@ -94,27 +93,33 @@ open class Xtremestream : ExtractorApi() {
 
             if (videoId.isNotBlank() && m3u8LoaderUrl.isNotBlank()) {
                 val resolutions = listOf(1080, 720, 480)
+                var foundValid = false
                 resolutions.forEach { resolution ->
                     val manifestUrl = "${m3u8LoaderUrl}/${videoId}&q=${resolution}"
-                    Log.d(TAG, "📦 Adding quality $resolution: $manifestUrl")
-                    callback.invoke(
-                        newExtractorLink(
-                            name,
-                            name,
-                            manifestUrl,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.quality = resolution
-                            this.referer = url
-                            this.headers = mapOf(
-                                "Accept" to "*/*",
-                                "Referer" to url,
-                                "User-Agent" to USER_AGENT
-                            )
-                        }
-                    )
+                    if (isValidManifest(manifestUrl, referer)) {
+                        Log.d(TAG, "📦 Adding quality $resolution: $manifestUrl")
+                        callback.invoke(
+                            newExtractorLink(
+                                name,
+                                name,
+                                manifestUrl,
+                                type = ExtractorLinkType.M3U8
+                            ) {
+                                this.quality = resolution
+                                this.referer = url
+                                this.headers = mapOf(
+                                    "Accept" to "*/*",
+                                    "Referer" to url,
+                                    "User-Agent" to USER_AGENT
+                                )
+                            }
+                        )
+                        foundValid = true
+                    } else {
+                        Log.d(TAG, "❌ Quality $resolution not valid")
+                    }
                 }
-                return true
+                if (foundValid) return true
             } else {
                 Log.w(TAG, "⚠️ videoId or m3u8LoaderUrl is blank")
             }
@@ -148,26 +153,32 @@ open class Xtremestream : ExtractorApi() {
         }
 
         if (videoUrls.isNotEmpty()) {
+            var foundValid = false
             videoUrls.forEach { videoUrl ->
-                val isM3u8 = videoUrl.contains(".m3u8")
-                Log.d(TAG, "📦 Returning video URL: $videoUrl (m3u8: $isM3u8)")
-                callback.invoke(
-                    newExtractorLink(
-                        name,
-                        name,
-                        videoUrl,
-                        type = if (isM3u8) ExtractorLinkType.M3U8 else INFER_TYPE
-                    ) {
-                        this.referer = url
-                        this.quality = guessQuality(videoUrl)
-                        this.headers = mapOf(
-                            "Referer" to url,
-                            "User-Agent" to USER_AGENT
-                        )
-                    }
-                )
+                if (isValidManifest(videoUrl, referer)) {
+                    val isM3u8 = videoUrl.contains(".m3u8")
+                    Log.d(TAG, "📦 Returning valid video URL: $videoUrl (m3u8: $isM3u8)")
+                    callback.invoke(
+                        newExtractorLink(
+                            name,
+                            name,
+                            videoUrl,
+                            type = if (isM3u8) ExtractorLinkType.M3U8 else INFER_TYPE
+                        ) {
+                            this.referer = url
+                            this.quality = guessQuality(videoUrl)
+                            this.headers = mapOf(
+                                "Referer" to url,
+                                "User-Agent" to USER_AGENT
+                            )
+                        }
+                    )
+                    foundValid = true
+                } else {
+                    Log.d(TAG, "❌ Video URL not valid: $videoUrl")
+                }
             }
-            return true
+            if (foundValid) return true
         }
 
         // ----- Method 3: JSON config inside scripts -----
@@ -181,8 +192,8 @@ open class Xtremestream : ExtractorApi() {
         jsonPatterns.forEach { pattern ->
             pattern.findAll(html).forEach { match ->
                 val videoUrl = match.groupValues[1]
-                if (videoUrl.isNotBlank()) {
-                    Log.d(TAG, "🔍 Found video URL in JSON: $videoUrl")
+                if (videoUrl.isNotBlank() && isValidManifest(videoUrl, referer)) {
+                    Log.d(TAG, "🔍 Found valid video URL in JSON: $videoUrl")
                     callback.invoke(
                         newExtractorLink(
                             name,
@@ -203,7 +214,7 @@ open class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ----- Method 4: Guess manifest from data parameter -----
+        // ----- Method 4: Guess manifest from data parameter (only if valid) -----
         val dataParam = url.substringAfter("data=").substringBefore("&")
         if (dataParam.isNotBlank()) {
             val baseUrl = url.substringBefore("/player/")
@@ -213,28 +224,98 @@ open class Xtremestream : ExtractorApi() {
                 "$baseUrl/manifest/$dataParam.m3u8"
             )
             Log.d(TAG, "🧪 Trying guessed API URLs: $possibleUrls")
+            var foundValid = false
             possibleUrls.forEach { manifestUrl ->
-                callback.invoke(
-                    newExtractorLink(
-                        name,
-                        name,
-                        manifestUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = url
-                        this.quality = 0
-                        this.headers = mapOf(
-                            "Referer" to url,
-                            "User-Agent" to USER_AGENT
-                        )
-                    }
-                )
+                if (isValidManifest(manifestUrl, referer)) {
+                    Log.d(TAG, "📦 Guessed API URL is valid: $manifestUrl")
+                    callback.invoke(
+                        newExtractorLink(
+                            name,
+                            name,
+                            manifestUrl,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.referer = url
+                            this.quality = 0
+                            this.headers = mapOf(
+                                "Referer" to url,
+                                "User-Agent" to USER_AGENT
+                            )
+                        }
+                    )
+                    foundValid = true
+                } else {
+                    Log.d(TAG, "❌ Guessed API URL not valid: $manifestUrl")
+                }
             }
-            return true
+            if (foundValid) return true
         }
 
         Log.w(TAG, "❌ All extraction methods failed for $url")
         return false
+    }
+
+    private suspend fun isValidManifest(url: String, referer: String?): Boolean {
+        return runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .head()
+                .headers(buildHeaders(referer))
+                .build()
+            client.newCall(request).execute().use { response ->
+                response.isSuccessful && (response.body?.contentLength() ?: 0) > 0
+            }
+        }.getOrDefault(false)
+    }
+
+    private suspend fun fetchHtml(url: String, referer: String?): String? {
+        return runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .headers(buildHeaders(referer))
+                .build()
+            client.newCall(request).execute().body?.string()
+        }.getOrNull()
+    }
+
+    private suspend fun headWithRedirects(url: String, referer: String?): okhttp3.Response {
+        return runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .head()
+                .headers(buildHeaders(referer))
+                .build()
+            client.newCall(request).execute()
+        }.getOrThrow()
+    }
+
+    private fun buildHeaders(referer: String?): Headers {
+        val builder = Headers.Builder()
+        val headers = mapOf(
+            "User-Agent" to USER_AGENT,
+            "Accept" to "*/*",
+            "Referer" to (referer ?: mainUrl),
+            "Origin" to mainUrl
+        )
+        headers.forEach { (key, value) -> builder.add(key, value) }
+        return builder.build()
+    }
+
+    private suspend fun createLink(url: String, referer: String?): ExtractorLink {
+        return newExtractorLink(
+            name,
+            name,
+            url,
+            type = ExtractorLinkType.M3U8
+        ) {
+            this.quality = guessQuality(url)
+            this.referer = referer
+            this.headers = mapOf(
+                "Referer" to referer,
+                "User-Agent" to USER_AGENT,
+                "Origin" to mainUrl
+            )
+        }
     }
 
     private fun guessQuality(url: String): Int {
