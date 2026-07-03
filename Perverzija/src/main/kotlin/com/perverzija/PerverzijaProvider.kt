@@ -1,15 +1,32 @@
 package com.perverzija
 
-import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.HomePageList
+import com.lagradost.cloudstream3.HomePageResponse
+import com.lagradost.cloudstream3.LoadResponse
+import com.lagradost.cloudstream3.MainAPI
+import com.lagradost.cloudstream3.MainPageRequest
+import com.lagradost.cloudstream3.SearchResponse
+import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.TvType
+import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.fixUrlNull
+import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.network.CloudflareKiller
-import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.newHomePageResponse
+import com.lagradost.cloudstream3.newMovieLoadResponse
+import com.lagradost.cloudstream3.SearchResponseList
+import com.lagradost.cloudstream3.newSearchResponseList
+import com.lagradost.cloudstream3.newMovieSearchResponse
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 
 class Perverzija : MainAPI() {
     override var name = "Perverzija"
     override var mainUrl = "https://tube.perverzija.com"
     override val supportedTypes = setOf(TvType.NSFW)
-    override val hasDownloadSupport = false
+
+    override val hasDownloadSupport = true
     override val hasMainPage = true
 
     private val cfInterceptor = CloudflareKiller()
@@ -34,10 +51,11 @@ class Perverzija : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val document = app.get(request.data.format(page), interceptor = cfInterceptor).document
+        val document = app.get(request.data.format(page), interceptor = cfInterceptor, timeout = 100L).document
         val home = document.select("div.row div div.post").mapNotNull {
             it.toSearchResult()
         }
+
         return newHomePageResponse(
             list = HomePageList(
                 name = request.name, list = home, isHorizontalImages = true
@@ -73,7 +91,7 @@ class Perverzija : MainAPI() {
             .select("div.row div div.post").mapNotNull {
                 it.toSearchResult()
             }.distinctBy { it.url }
-        val hasNext = results.isNotEmpty()
+        val hasNext = if (results.isEmpty()) false else true
         return newSearchResponseList(results, hasNext)
     }
 
@@ -82,7 +100,11 @@ class Perverzija : MainAPI() {
         val poster = document.select("div#featured-img-id img").attr("src")
         val title = document.select("div.title-info h1.light-title.entry-title").text()
         val pTags = document.select("div.item-content p")
-        val description = pTags.joinToString("\n") { it.text() }
+        val description = StringBuilder().apply {
+            pTags.forEach {
+                append(it.text())
+            }
+        }.toString()
         val tags = document.select("div.item-tax-list div a").map { it.text() }
         val recommendations =
             document.select("div.related-gallery dl.gallery-item").mapNotNull {
@@ -102,34 +124,32 @@ class Perverzija : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // --- Adaptive player selection: only change if not already VideoJS ---
-        val fixedUrl = if (data.contains("?link=")) {
-            // If link is present and not 1, replace it with 1; else leave as is.
-            val currentLink = data.substringAfter("?link=").substringBefore("&")
-            if (currentLink != "1") {
-                data.replace(Regex("[?&]link=\\d+"), "?link=1")
-            } else {
-                data // already VideoJS, no change
-            }
-        } else {
-            // No link parameter, add ?link=1
-            "$data?link=1"
+        val response = app.get(data, interceptor = cfInterceptor)
+        val document = response.document
+
+        val iframeUrl = document.select("div#player-embed iframe").attr("src")
+        if (iframeUrl.isBlank()) {
+            return false
         }
 
-        val document = app.get(fixedUrl, interceptor = cfInterceptor).document
-        val iframeUrl = document.select("div#player-embed iframe").attr("src")
-        if (iframeUrl.isBlank()) return false
-
-        if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
+        // Stage 1: Try CloudStream's built‑in extractor on the main video page URL.
+        // This often works because the page contains the player embed information.
+        if (loadExtractor(data, subtitleCallback, callback)) {
             return true
         }
 
+        // Stage 2: Try our custom extractor on the iframe URL.
         var linkFound = false
         val wrapperCallback: (ExtractorLink) -> Unit = { link ->
             linkFound = true
             callback(link)
         }
-        Xtremestream().getUrl(iframeUrl, fixedUrl, subtitleCallback, wrapperCallback)
-        return linkFound
+        Xtremestream().getUrl(iframeUrl, data, subtitleCallback, wrapperCallback)
+        if (linkFound) {
+            return true
+        }
+
+        // Stage 3: Fallback to loadExtractor on the iframe URL.
+        return loadExtractor(iframeUrl, subtitleCallback, callback)
     }
 }
