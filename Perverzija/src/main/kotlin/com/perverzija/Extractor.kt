@@ -21,164 +21,129 @@ open class Xtremestream : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val request = Request.Builder()
-            .url(url)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-            .header("Referer", referer.toString())
-            .header("User-Agent", USER_AGENT)
-            .build()
+        val html = fetchHtml(url) ?: return
 
-        val response = client.newCall(request).execute()
-        val html = response.body?.string() ?: return
-
-        // ----- Method 1: original pattern (var video_id) -----
-        val playerScript =
-            Jsoup.parse(html).selectXpath("//script[contains(text(),'var video_id')]")
-                .html()
-        if (playerScript.isNotBlank()) {
-            val videoId = playerScript.substringAfter("var video_id = `").substringBefore("`;")
-            val m3u8LoaderUrl =
-                playerScript.substringAfter("var m3u8_loader_url = `").substringBefore("`;")
-
-            if (videoId.isNotBlank() && m3u8LoaderUrl.isNotBlank()) {
-                val resolutions = listOf(1080, 720, 480)
-                resolutions.forEach { resolution ->
-                    callback.invoke(
-                        newExtractorLink(
-                            name,
-                            name,
-                            "${m3u8LoaderUrl}/${videoId}&q=${resolution}",
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.quality = resolution
-                            this.referer = url
-                            this.headers = mapOf(
-                                "Accept" to "*/*",
-                                "Referer" to url,
-                                "User-Agent" to USER_AGENT
-                            )
-                        }
-                    )
-                }
-                return
-            }
-        }
-
-        // ----- Method 2: search for direct video URLs in the HTML -----
-        val doc = Jsoup.parse(html)
-        val videoUrls = mutableListOf<String>()
-
-        // 2a: <video> or <source> tags
-        val videoSources = doc.select("video source")
-        videoSources.forEach { source ->
-            val src = source.attr("src")
-            if (src.isNotBlank()) videoUrls.add(src)
-        }
-        val videoTag = doc.selectFirst("video")
-        videoTag?.let {
-            val src = it.attr("src")
-            if (src.isNotBlank()) videoUrls.add(src)
-        }
-
-        // 2b: regex for .mp4/.m3u8 URLs (including those in JavaScript)
-        val regex = Regex("""(https?://[^\s"']+\.(mp4|m3u8))""")
-        regex.findAll(html).forEach { match ->
-            val videoUrl = match.groupValues[1]
-            if (videoUrl.isNotBlank() && !videoUrls.contains(videoUrl)) {
-                videoUrls.add(videoUrl)
-            }
-        }
-
-        if (videoUrls.isNotEmpty()) {
-            videoUrls.forEach { videoUrl ->
-                val isM3u8 = videoUrl.contains(".m3u8")
-                callback.invoke(
-                    newExtractorLink(
-                        name,
-                        name,
-                        videoUrl,
-                        type = if (isM3u8) ExtractorLinkType.M3U8 else INFER_TYPE
-                    ) {
-                        this.referer = url
-                        this.quality = guessQuality(videoUrl)
-                        this.headers = mapOf(
-                            "Referer" to url,
-                            "User-Agent" to USER_AGENT
-                        )
-                    }
-                )
-            }
+        // ----- Method 1: Direct <video> or <source> tags -----
+        extractFromHtml(html, url)?.let { links ->
+            links.forEach { callback.invoke(it) }
             return
         }
 
-        // ----- Method 3: look for JSON config inside scripts (common in new players) -----
-        val jsonPatterns = listOf(
+        // ----- Method 2: JavaScript variables (video_id + m3u8_loader_url) -----
+        extractFromScript(html, url)?.let { links ->
+            links.forEach { callback.invoke(it) }
+            return
+        }
+
+        // ----- Method 3: JSON config inside scripts (common in Plyr/VideoJS) -----
+        extractFromJson(html, url)?.let { links ->
+            links.forEach { callback.invoke(it) }
+            return
+        }
+
+        // ----- Method 4: Guess manifest from data parameter (fallback) -----
+        val dataParam = url.substringAfter("data=").substringBefore("&")
+        if (dataParam.isNotBlank()) {
+            val base = url.substringBefore("/player/")
+            val possibleManifests = listOf(
+                "$base/api/video/$dataParam/master.m3u8",
+                "$base/api/manifest/$dataParam",
+                "$base/manifest/$dataParam.m3u8"
+            )
+            possibleManifests.forEach { manifest ->
+                callback.invoke(
+                    createLink(manifest, url, quality = 0, isM3u8 = true)
+                )
+            }
+        }
+    }
+
+    // ---------- Helper methods ----------
+
+    private suspend fun fetchHtml(url: String): String? {
+        return runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", USER_AGENT)
+                .header("Referer", url)
+                .build()
+            client.newCall(request).execute().body?.string()
+        }.getOrNull()
+    }
+
+    private fun extractFromHtml(html: String, pageUrl: String): List<ExtractorLink>? {
+        val doc = Jsoup.parse(html)
+        val sources = doc.select("video source[src]").map { it.attr("src") } +
+                doc.select("video[src]").map { it.attr("src") }
+        if (sources.isNotEmpty()) {
+            return sources.map { src ->
+                createLink(src, pageUrl, quality = guessQuality(src), isM3u8 = src.contains(".m3u8"))
+            }
+        }
+        return null
+    }
+
+    private fun extractFromScript(html: String, pageUrl: String): List<ExtractorLink>? {
+        val script = Jsoup.parse(html).selectXpath("//script[contains(text(),'var video_id')]").html()
+        if (script.isBlank()) return null
+
+        val videoId = script.substringAfter("var video_id = `").substringBefore("`;")
+        val loaderUrl = script.substringAfter("var m3u8_loader_url = `").substringBefore("`;")
+        if (videoId.isBlank() || loaderUrl.isBlank()) return null
+
+        return listOf(1080, 720, 480, 360).map { quality ->
+            val link = "${loaderUrl}/${videoId}&q=${quality}"
+            createLink(link, pageUrl, quality = quality, isM3u8 = true)
+        }
+    }
+
+    private fun extractFromJson(html: String, pageUrl: String): List<ExtractorLink>? {
+        // Common patterns in player configuration
+        val patterns = listOf(
             Regex(""""file"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
             Regex(""""src"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
             Regex(""""url"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
             Regex(""""source"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
-            Regex(""""video"\s*:\s*"([^"]+\.(mp4|m3u8))""")
+            Regex(""""video"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
+            Regex(""""link"\s*:\s*"([^"]+\.(mp4|m3u8))""")
         )
-        jsonPatterns.forEach { pattern ->
-            pattern.findAll(html).forEach { match ->
-                val videoUrl = match.groupValues[1]
-                if (videoUrl.isNotBlank()) {
-                    callback.invoke(
-                        newExtractorLink(
-                            name,
-                            name,
-                            videoUrl,
-                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
-                        ) {
-                            this.referer = url
-                            this.quality = guessQuality(videoUrl)
-                            this.headers = mapOf(
-                                "Referer" to url,
-                                "User-Agent" to USER_AGENT
-                            )
-                        }
-                    )
-                    return
-                }
-            }
-        }
-
-        // ----- Method 4: Try to guess the manifest URL from the data parameter -----
-        val dataParam = url.substringAfter("data=").substringBefore("&")
-        if (dataParam.isNotBlank()) {
-            val baseUrl = url.substringBefore("/player/")
-            val possibleUrls = listOf(
-                "$baseUrl/api/video/$dataParam/master.m3u8",
-                "$baseUrl/api/manifest/$dataParam",
-                "$baseUrl/manifest/$dataParam.m3u8"
-            )
-            possibleUrls.forEach { manifestUrl ->
-                callback.invoke(
-                    newExtractorLink(
-                        name,
-                        name,
-                        manifestUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = url
-                        this.quality = 0
-                        this.headers = mapOf(
-                            "Referer" to url,
-                            "User-Agent" to USER_AGENT
-                        )
-                    }
+        for (pattern in patterns) {
+            val match = pattern.find(html)
+            val videoUrl = match?.groupValues?.get(1)
+            if (!videoUrl.isNullOrBlank()) {
+                return listOf(
+                    createLink(videoUrl, pageUrl, quality = guessQuality(videoUrl), isM3u8 = videoUrl.contains(".m3u8"))
                 )
             }
-            return
         }
+        return null
+    }
+
+    private fun createLink(
+        url: String,
+        referer: String,
+        quality: Int = 0,
+        isM3u8: Boolean = false
+    ): ExtractorLink {
+        return newExtractorLink(
+            source = name,
+            name = name,
+            url = url,
+            type = if (isM3u8) ExtractorLinkType.M3U8 else INFER_TYPE,
+            quality = quality,
+            headers = mapOf(
+                "Referer" to referer,
+                "User-Agent" to USER_AGENT
+            )
+        )
     }
 
     private fun guessQuality(url: String): Int {
         return when {
-            url.contains("1080") -> 1080
-            url.contains("720") -> 720
-            url.contains("480") -> 480
-            url.contains("360") -> 360
+            url.contains("1080") || url.contains("1080p") -> 1080
+            url.contains("720") || url.contains("720p") -> 720
+            url.contains("480") || url.contains("480p") -> 480
+            url.contains("360") || url.contains("360p") -> 360
             else -> 0
         }
     }
