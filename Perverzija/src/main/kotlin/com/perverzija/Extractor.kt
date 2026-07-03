@@ -1,5 +1,6 @@
 package com.perverzija
 
+import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.utils.*
 import okhttp3.OkHttpClient
@@ -14,7 +15,7 @@ open class Xtremestream : ExtractorApi() {
 
     override suspend fun getUrl(
         url: String,
-        referer: String?,
+        referer: String? = null,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
