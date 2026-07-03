@@ -73,7 +73,7 @@ class Perverzija : MainAPI() {
             .select("div.row div div.post").mapNotNull {
                 it.toSearchResult()
             }.distinctBy { it.url }
-        val hasNext = if (results.isEmpty()) false else true
+        val hasNext = results.isNotEmpty()
         return newSearchResponseList(results, hasNext)
     }
 
@@ -82,11 +82,7 @@ class Perverzija : MainAPI() {
         val poster = document.select("div#featured-img-id img").attr("src")
         val title = document.select("div.title-info h1.light-title.entry-title").text()
         val pTags = document.select("div.item-content p")
-        val description = StringBuilder().apply {
-            pTags.forEach {
-                append(it.text())
-            }
-        }.toString()
+        val description = pTags.joinToString("\n") { it.text() }
         val tags = document.select("div.item-tax-list div a").map { it.text() }
         val recommendations =
             document.select("div.related-gallery dl.gallery-item").mapNotNull {
