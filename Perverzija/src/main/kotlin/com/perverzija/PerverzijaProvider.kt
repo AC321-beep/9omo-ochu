@@ -102,10 +102,17 @@ class Perverzija : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // --- ONLY CHANGE: Force VideoJS (link=1) ---
+        // --- Adaptive player selection: only change if not already VideoJS ---
         val fixedUrl = if (data.contains("?link=")) {
-            data.replace(Regex("[?&]link=\\d+"), "?link=1")
+            // If link is present and not 1, replace it with 1; else leave as is.
+            val currentLink = data.substringAfter("?link=").substringBefore("&")
+            if (currentLink != "1") {
+                data.replace(Regex("[?&]link=\\d+"), "?link=1")
+            } else {
+                data // already VideoJS, no change
+            }
         } else {
+            // No link parameter, add ?link=1
             "$data?link=1"
         }
 
