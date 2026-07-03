@@ -15,19 +15,19 @@ open class Xtremestream : ExtractorApi() {
 
     override suspend fun getUrl(
         url: String,
-        referer: String?,  // no default – matches superclass
+        referer: String?,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
         val html = fetchHtml(url) ?: return
 
-        // Direct <video>/<source>
+        // --- Strategy 1: Direct <video> / <source> tags ---
         extractFromHtml(html, url)?.forEach { callback.invoke(it) } ?: run {
-            // JavaScript variables
+            // --- Strategy 2: JavaScript variables (typical for this player) ---
             extractFromScript(html, url)?.forEach { callback.invoke(it) } ?: run {
-                // JSON config
+                // --- Strategy 3: JSON config inside scripts ---
                 extractFromJson(html, url)?.forEach { callback.invoke(it) } ?: run {
-                    // Guess manifest
+                    // --- Strategy 4: Guess manifest from the 'data' parameter ---
                     val dataParam = url.substringAfter("data=").substringBefore("&")
                     if (dataParam.isNotBlank()) {
                         val base = url.substringBefore("/player/")
@@ -69,6 +69,7 @@ open class Xtremestream : ExtractorApi() {
     }
 
     private suspend fun extractFromScript(html: String, pageUrl: String): List<ExtractorLink>? {
+        // This player often defines video_id and m3u8_loader_url in a script
         val script = Jsoup.parse(html).selectXpath("//script[contains(text(),'var video_id')]").html()
         if (script.isBlank()) return null
 
@@ -83,6 +84,7 @@ open class Xtremestream : ExtractorApi() {
     }
 
     private suspend fun extractFromJson(html: String, pageUrl: String): List<ExtractorLink>? {
+        // Common JSON patterns used in Plyr/VideoJS configurations
         val patterns = listOf(
             Regex(""""file"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
             Regex(""""src"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
