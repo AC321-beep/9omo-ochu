@@ -34,7 +34,7 @@ class Perverzija : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val document = app.get(request.data.format(page), interceptor = cfInterceptor, timeout = 100L).document
+        val document = app.get(request.data.format(page), interceptor = cfInterceptor).document
         val home = document.select("div.row div div.post").mapNotNull {
             it.toSearchResult()
         }
@@ -106,30 +106,27 @@ class Perverzija : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Force VideoJS (player=1)
+        // --- ONLY CHANGE: Force VideoJS (link=1) ---
         val fixedUrl = if (data.contains("?link=")) {
             data.replace(Regex("[?&]link=\\d+"), "?link=1")
         } else {
             "$data?link=1"
         }
 
-        // Fetch the main page to get the iframe URL
         val document = app.get(fixedUrl, interceptor = cfInterceptor).document
         val iframeUrl = document.select("div#player-embed iframe").attr("src")
         if (iframeUrl.isBlank()) return false
 
-        // Try built‑in extractors first
         if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
             return true
         }
 
-        // Fallback to our custom extractor
-        var found = false
-        val wrapper: (ExtractorLink) -> Unit = {
-            found = true
-            callback(it)
+        var linkFound = false
+        val wrapperCallback: (ExtractorLink) -> Unit = { link ->
+            linkFound = true
+            callback(link)
         }
-        Xtremestream().getUrl(iframeUrl, fixedUrl, subtitleCallback, wrapper)
-        return found
+        Xtremestream().getUrl(iframeUrl, fixedUrl, subtitleCallback, wrapperCallback)
+        return linkFound
     }
 }
