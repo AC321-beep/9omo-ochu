@@ -4,29 +4,13 @@ import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Headers
-import java.util.concurrent.TimeUnit
+import org.jsoup.Jsoup
 
-class Xtremestream : ExtractorApi() {
+open class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
-    override var mainUrl = "https://pervl5.xtremestream.xyz"
+    override var mainUrl = "https://pervl4.xtremestream.xyz"
     override val requiresReferer = true
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .build()
-
-    private val headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language" to "en-US,en;q=0.5",
-        "Accept-Encoding" to "gzip, deflate, br",
-        "Connection" to "keep-alive",
-        "Origin" to mainUrl,
-        "Referer" to mainUrl
-    )
+    private val client = OkHttpClient()
 
     override suspend fun getUrl(
         url: String,
@@ -34,121 +18,176 @@ class Xtremestream : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val dataParam = url.substringAfter("data=").substringBefore("&")
-        if (dataParam.isBlank()) return
+        // Try extraction with the given URL (any player)
+        val found = tryExtract(url, referer, callback)
+        if (found) return
 
-        // 1. Fetch iframe HTML
-        val iframeHtml = fetchHtml(url, referer)
-        if (iframeHtml != null) {
-            // ---- Direct .m3u8 URL ----
-            val manifestRegex = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""")
-            manifestRegex.find(iframeHtml)?.value?.let { manifestUrl ->
-                if (isValidManifest(manifestUrl, referer)) {
-                    callback(createLink(manifestUrl, referer))
-                    return
-                }
+        // If the current URL is not already VideoJS (player=1), try forcing VideoJS
+        if (!url.contains("player=1")) {
+            val fixedUrl = url.replace(Regex("[?&]player=\\d+"), "player=1")
+            if (fixedUrl != url) {
+                tryExtract(fixedUrl, referer, callback)
             }
+        }
+    }
 
-            // ---- JSON config: "file", "src", "url" ----
-            val jsonRegex = Regex("\"(?:file|src|url|source)\"\\s*:\\s*\"([^\"]+)\"")
-            jsonRegex.findAll(iframeHtml).forEach { match ->
-                val candidate = match.groupValues[1]
-                if (candidate.endsWith(".m3u8") && isValidManifest(candidate, referer)) {
-                    callback(createLink(candidate, referer))
-                    return
-                }
-            }
+    private suspend fun tryExtract(
+        url: String,
+        referer: String?,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val request = Request.Builder()
+            .url(url)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+            .header("Referer", referer.toString())
+            .header("User-Agent", USER_AGENT)
+            .build()
 
-            // ---- <source> tags ----
-            val sourceRegex = Regex("<source[^>]+src\\s*=\\s*\"([^\"]+)\"")
-            sourceRegex.findAll(iframeHtml).forEach { match ->
-                val src = match.groupValues[1]
-                if (src.endsWith(".m3u8") && isValidManifest(src, referer)) {
-                    callback(createLink(src, referer))
-                    return
+        val response = client.newCall(request).execute()
+        val html = response.body?.string() ?: return false
+
+        // ----- Method 1: VideoJS specific pattern (var video_id, var m3u8_loader_url) -----
+        val playerScript =
+            Jsoup.parse(html).selectXpath("//script[contains(text(),'var video_id')]")
+                .html()
+        if (playerScript.isNotBlank()) {
+            val videoId = playerScript.substringAfter("var video_id = `").substringBefore("`;")
+            val m3u8LoaderUrl =
+                playerScript.substringAfter("var m3u8_loader_url = `").substringBefore("`;")
+
+            if (videoId.isNotBlank() && m3u8LoaderUrl.isNotBlank()) {
+                val resolutions = listOf(1080, 720, 480)
+                resolutions.forEach { resolution ->
+                    callback.invoke(
+                        newExtractorLink(
+                            name,
+                            name,
+                            "${m3u8LoaderUrl}/${videoId}&q=${resolution}",
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.quality = resolution
+                            this.referer = url
+                            this.headers = mapOf(
+                                "Accept" to "*/*",
+                                "Referer" to url,
+                                "User-Agent" to USER_AGENT
+                            )
+                        }
+                    )
                 }
+                return true
             }
         }
 
-        // 2. Try common API endpoints
-        val base = "https://pervl5.xtremestream.xyz"
-        val candidates = listOf(
-            "$base/api/video/$dataParam/master.m3u8",
-            "$base/api/manifest/$dataParam",
-            "$base/manifest/$dataParam.m3u8",
-            "$base/video/$dataParam/master.m3u8",
-            "$base/api/v1/manifest?data=$dataParam"
+        // ----- Method 2: Generic – search for direct video URLs in the HTML (works for any player) -----
+        val doc = Jsoup.parse(html)
+        val videoUrls = mutableListOf<String>()
+
+        // 2a: <video> or <source> tags
+        val videoSources = doc.select("video source")
+        videoSources.forEach { source ->
+            val src = source.attr("src")
+            if (src.isNotBlank()) videoUrls.add(src)
+        }
+        val videoTag = doc.selectFirst("video")
+        videoTag?.let {
+            val src = it.attr("src")
+            if (src.isNotBlank()) videoUrls.add(src)
+        }
+
+        // 2b: regex for .mp4/.m3u8 URLs (including those in JavaScript)
+        val regex = Regex("""(https?://[^\s"']+\.(mp4|m3u8))""")
+        regex.findAll(html).forEach { match ->
+            val videoUrl = match.groupValues[1]
+            if (videoUrl.isNotBlank() && !videoUrls.contains(videoUrl)) {
+                videoUrls.add(videoUrl)
+            }
+        }
+
+        if (videoUrls.isNotEmpty()) {
+            videoUrls.forEach { videoUrl ->
+                val isM3u8 = videoUrl.contains(".m3u8")
+                callback.invoke(
+                    newExtractorLink(
+                        name,
+                        name,
+                        videoUrl,
+                        type = if (isM3u8) ExtractorLinkType.M3U8 else INFER_TYPE
+                    ) {
+                        this.referer = url
+                        this.quality = guessQuality(videoUrl)
+                        this.headers = mapOf(
+                            "Referer" to url,
+                            "User-Agent" to USER_AGENT
+                        )
+                    }
+                )
+            }
+            return true
+        }
+
+        // ----- Method 3: Generic – look for JSON config inside scripts (common in newer players) -----
+        val jsonPatterns = listOf(
+            Regex(""""file"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
+            Regex(""""src"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
+            Regex(""""url"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
+            Regex(""""source"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
+            Regex(""""video"\s*:\s*"([^"]+\.(mp4|m3u8))""")
         )
-        for (candidate in candidates) {
-            if (isValidManifest(candidate, referer)) {
-                callback(createLink(candidate, referer))
-                return
+        jsonPatterns.forEach { pattern ->
+            pattern.findAll(html).forEach { match ->
+                val videoUrl = match.groupValues[1]
+                if (videoUrl.isNotBlank()) {
+                    callback.invoke(
+                        newExtractorLink(
+                            name,
+                            name,
+                            videoUrl,
+                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+                        ) {
+                            this.referer = url
+                            this.quality = guessQuality(videoUrl)
+                            this.headers = mapOf(
+                                "Referer" to url,
+                                "User-Agent" to USER_AGENT
+                            )
+                        }
+                    )
+                    return true
+                }
             }
         }
 
-        // 3. Follow redirects
-        val response = headWithRedirects(url, referer)
-        val location = response.header("Location")
-        if (location != null && location.endsWith(".m3u8")) {
-            callback(createLink(location, referer))
-        }
-    }
-
-    private suspend fun isValidManifest(url: String, referer: String?): Boolean {
-        return runCatching {
-            val request = Request.Builder()
-                .url(url)
-                .head()
-                .headers(buildHeaders(referer))
-                .build()
-            client.newCall(request).execute().use { response ->
-                response.isSuccessful && (response.body?.contentLength() ?: 0) > 0
+        // ----- Method 4: Generic – Try to guess the manifest URL from the data parameter -----
+        val dataParam = url.substringAfter("data=").substringBefore("&")
+        if (dataParam.isNotBlank()) {
+            val baseUrl = url.substringBefore("/player/")
+            val possibleUrls = listOf(
+                "$baseUrl/api/video/$dataParam/master.m3u8",
+                "$baseUrl/api/manifest/$dataParam",
+                "$baseUrl/manifest/$dataParam.m3u8"
+            )
+            possibleUrls.forEach { manifestUrl ->
+                callback.invoke(
+                    newExtractorLink(
+                        name,
+                        name,
+                        manifestUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = url
+                        this.quality = 0
+                        this.headers = mapOf(
+                            "Referer" to url,
+                            "User-Agent" to USER_AGENT
+                        )
+                    }
+                )
             }
-        }.getOrDefault(false)
-    }
-
-    private suspend fun fetchHtml(url: String, referer: String?): String? {
-        return runCatching {
-            val request = Request.Builder()
-                .url(url)
-                .headers(buildHeaders(referer))
-                .build()
-            client.newCall(request).execute().body?.string()
-        }.getOrNull()
-    }
-
-    private suspend fun headWithRedirects(url: String, referer: String?): okhttp3.Response {
-        return runCatching {
-            val request = Request.Builder()
-                .url(url)
-                .head()
-                .headers(buildHeaders(referer))
-                .build()
-            client.newCall(request).execute()
-        }.getOrThrow()
-    }
-
-    private fun buildHeaders(referer: String?): Headers {
-        val builder = Headers.Builder()
-        headers.forEach { (key, value) -> builder.add(key, value) }
-        referer?.let { builder.add("Referer", it) }
-        builder.add("Origin", mainUrl)
-        return builder.build()
-    }
-
-    private suspend fun createLink(url: String, referer: String?): ExtractorLink {
-        return newExtractorLink(
-            source = name,
-            name = name,
-            url = url,
-            type = ExtractorLinkType.M3U8
-        ) {
-            this.quality = guessQuality(url)
-            this.headers = headers.toMutableMap().apply {
-                referer?.let { put("Referer", it) }
-                put("Origin", mainUrl)
-            }
+            return true
         }
+
+        return false
     }
 
     private fun guessQuality(url: String): Int {
