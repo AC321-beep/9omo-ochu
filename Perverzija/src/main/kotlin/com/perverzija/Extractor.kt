@@ -1,7 +1,7 @@
 package com.perverzija
 
 import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.USER_AGENT
+import com.lagradost.cloudstream3.USER_AGENT  // ✅ added import
 import com.lagradost.cloudstream3.utils.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -19,13 +19,20 @@ open class Xtremestream : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Try extraction with the given URL (any player)
-        val found = tryExtract(url, referer, callback)
+        // First try extraction with the given URL (whatever player it is)
+        var found = tryExtract(url, referer, callback)
         if (found) return
 
-        // If the current URL is not already VideoJS (player=1), try forcing VideoJS
+        // If the current URL doesn't already use player=1, try forcing VideoJS
         if (!url.contains("player=1")) {
-            val fixedUrl = url.replace(Regex("[?&]player=\\d+"), "player=1")
+            val fixedUrl = if (url.contains("player=")) {
+                // Replace existing player parameter with 1
+                url.replace(Regex("[?&]player=\\d+"), "player=1")
+            } else {
+                // No player parameter, add it
+                if (url.contains("?")) "$url&player=1" else "$url?player=1"
+            }
+            // Only retry if the URL actually changed
             if (fixedUrl != url) {
                 tryExtract(fixedUrl, referer, callback)
             }
@@ -41,7 +48,7 @@ open class Xtremestream : ExtractorApi() {
             .url(url)
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
             .header("Referer", referer.toString())
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", USER_AGENT)  // ✅ now resolved
             .build()
 
         val response = client.newCall(request).execute()
