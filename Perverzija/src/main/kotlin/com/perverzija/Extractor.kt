@@ -1,12 +1,9 @@
 package com.perverzija
 
-import com.lagradost.cloudstream3.utils.ExtractorApi
-import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.utils.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import com.lagradost.cloudstream3.USER_AGENT
 import org.jsoup.Jsoup
 
 open class Xtremestream : ExtractorApi() {
@@ -23,42 +20,30 @@ open class Xtremestream : ExtractorApi() {
     ) {
         val html = fetchHtml(url) ?: return
 
-        // ----- Method 1: Direct <video> or <source> tags -----
-        extractFromHtml(html, url)?.let { links ->
-            links.forEach { callback.invoke(it) }
-            return
-        }
-
-        // ----- Method 2: JavaScript variables (video_id + m3u8_loader_url) -----
-        extractFromScript(html, url)?.let { links ->
-            links.forEach { callback.invoke(it) }
-            return
-        }
-
-        // ----- Method 3: JSON config inside scripts (common in Plyr/VideoJS) -----
-        extractFromJson(html, url)?.let { links ->
-            links.forEach { callback.invoke(it) }
-            return
-        }
-
-        // ----- Method 4: Guess manifest from data parameter (fallback) -----
-        val dataParam = url.substringAfter("data=").substringBefore("&")
-        if (dataParam.isNotBlank()) {
-            val base = url.substringBefore("/player/")
-            val possibleManifests = listOf(
-                "$base/api/video/$dataParam/master.m3u8",
-                "$base/api/manifest/$dataParam",
-                "$base/manifest/$dataParam.m3u8"
-            )
-            possibleManifests.forEach { manifest ->
-                callback.invoke(
-                    createLink(manifest, url, quality = 0, isM3u8 = true)
-                )
+        // Direct <video>/<source>
+        extractFromHtml(html, url)?.forEach { callback.invoke(it) } ?: run {
+            // JavaScript variables
+            extractFromScript(html, url)?.forEach { callback.invoke(it) } ?: run {
+                // JSON config
+                extractFromJson(html, url)?.forEach { callback.invoke(it) } ?: run {
+                    // Guess manifest
+                    val dataParam = url.substringAfter("data=").substringBefore("&")
+                    if (dataParam.isNotBlank()) {
+                        val base = url.substringBefore("/player/")
+                        listOf(
+                            "$base/api/video/$dataParam/master.m3u8",
+                            "$base/api/manifest/$dataParam",
+                            "$base/manifest/$dataParam.m3u8"
+                        ).forEach { manifest ->
+                            callback.invoke(
+                                createLink(manifest, url, quality = 0, isM3u8 = true)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
-
-    // ---------- Helper methods ----------
 
     private suspend fun fetchHtml(url: String): String? {
         return runCatching {
@@ -71,19 +56,18 @@ open class Xtremestream : ExtractorApi() {
         }.getOrNull()
     }
 
-    private fun extractFromHtml(html: String, pageUrl: String): List<ExtractorLink>? {
+    private suspend fun extractFromHtml(html: String, pageUrl: String): List<ExtractorLink>? {
         val doc = Jsoup.parse(html)
         val sources = doc.select("video source[src]").map { it.attr("src") } +
                 doc.select("video[src]").map { it.attr("src") }
-        if (sources.isNotEmpty()) {
-            return sources.map { src ->
+        return if (sources.isNotEmpty()) {
+            sources.map { src ->
                 createLink(src, pageUrl, quality = guessQuality(src), isM3u8 = src.contains(".m3u8"))
             }
-        }
-        return null
+        } else null
     }
 
-    private fun extractFromScript(html: String, pageUrl: String): List<ExtractorLink>? {
+    private suspend fun extractFromScript(html: String, pageUrl: String): List<ExtractorLink>? {
         val script = Jsoup.parse(html).selectXpath("//script[contains(text(),'var video_id')]").html()
         if (script.isBlank()) return null
 
@@ -97,8 +81,7 @@ open class Xtremestream : ExtractorApi() {
         }
     }
 
-    private fun extractFromJson(html: String, pageUrl: String): List<ExtractorLink>? {
-        // Common patterns in player configuration
+    private suspend fun extractFromJson(html: String, pageUrl: String): List<ExtractorLink>? {
         val patterns = listOf(
             Regex(""""file"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
             Regex(""""src"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
@@ -119,7 +102,7 @@ open class Xtremestream : ExtractorApi() {
         return null
     }
 
-    private fun createLink(
+    private suspend fun createLink(
         url: String,
         referer: String,
         quality: Int = 0,
@@ -129,13 +112,14 @@ open class Xtremestream : ExtractorApi() {
             source = name,
             name = name,
             url = url,
-            type = if (isM3u8) ExtractorLinkType.M3U8 else INFER_TYPE,
-            quality = quality,
-            headers = mapOf(
+            type = if (isM3u8) ExtractorLinkType.M3U8 else INFER_TYPE
+        ) {
+            this.quality = quality
+            this.headers = mapOf(
                 "Referer" to referer,
                 "User-Agent" to USER_AGENT
             )
-        )
+        }
     }
 
     private fun guessQuality(url: String): Int {
