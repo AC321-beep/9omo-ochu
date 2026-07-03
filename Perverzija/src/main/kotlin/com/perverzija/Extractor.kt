@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.utils.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Headers  // ✅ added import
 import org.jsoup.Jsoup
 
 open class Xtremestream : ExtractorApi() {
@@ -26,7 +27,6 @@ open class Xtremestream : ExtractorApi() {
         Log.d(TAG, "URL: $url")
         Log.d(TAG, "Referer: $referer")
 
-        // First try with the given URL
         var found = tryExtract(url, referer, callback)
         if (found) {
             Log.d(TAG, "✅ Extraction succeeded with original URL")
@@ -35,7 +35,6 @@ open class Xtremestream : ExtractorApi() {
 
         Log.d(TAG, "⚠️ Extraction failed with original URL, trying VideoJS fallback...")
 
-        // If the current URL doesn't already use player=1, try forcing VideoJS
         if (!url.contains("player=1")) {
             val fixedUrl = if (url.contains("player=")) {
                 url.replace(Regex("[?&]player=\\d+"), "player=1")
@@ -79,7 +78,7 @@ open class Xtremestream : ExtractorApi() {
 
         Log.d(TAG, "📄 HTML length: ${html.length} chars")
 
-        // ----- Method 1: VideoJS specific pattern (var video_id, var m3u8_loader_url) -----
+        // ----- Method 1: VideoJS specific pattern -----
         val playerScript =
             Jsoup.parse(html).selectXpath("//script[contains(text(),'var video_id')]")
                 .html()
@@ -127,7 +126,7 @@ open class Xtremestream : ExtractorApi() {
             Log.d(TAG, "ℹ️ No 'var video_id' script found")
         }
 
-        // ----- Method 2: Generic – search for direct video URLs in the HTML -----
+        // ----- Method 2: Generic – search for direct video URLs -----
         val doc = Jsoup.parse(html)
         val videoUrls = mutableListOf<String>()
 
@@ -291,13 +290,10 @@ open class Xtremestream : ExtractorApi() {
 
     private fun buildHeaders(referer: String?): Headers {
         val builder = Headers.Builder()
-        val headers = mapOf(
-            "User-Agent" to USER_AGENT,
-            "Accept" to "*/*",
-            "Referer" to (referer ?: mainUrl),
-            "Origin" to mainUrl
-        )
-        headers.forEach { (key, value) -> builder.add(key, value) }
+        builder.add("User-Agent", USER_AGENT)
+        builder.add("Accept", "*/*")
+        builder.add("Origin", mainUrl)
+        referer?.let { builder.add("Referer", it) }
         return builder.build()
     }
 
@@ -311,7 +307,7 @@ open class Xtremestream : ExtractorApi() {
             this.quality = guessQuality(url)
             this.referer = referer
             this.headers = mapOf(
-                "Referer" to referer,
+                "Referer" to (referer ?: mainUrl),
                 "User-Agent" to USER_AGENT,
                 "Origin" to mainUrl
             )
