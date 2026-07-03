@@ -10,7 +10,6 @@ class Xtremestream : ExtractorApi() {
     override var mainUrl = "https://pervl5.xtremestream.xyz"
     override val requiresReferer = true
 
-    // Browser headers – match the iframe request
     private val headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -21,7 +20,7 @@ class Xtremestream : ExtractorApi() {
         "Referer" to mainUrl
     )
 
-    private val cookieJar = PersistentCookieJar() // defined in separate file
+    private val cookieJar = PersistentCookieJar()
     private val client = OkHttpClient.Builder()
         .cookieJar(cookieJar)
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -38,10 +37,8 @@ class Xtremestream : ExtractorApi() {
         val dataParam = url.substringAfter("data=").substringBefore("&")
         if (dataParam.isBlank()) return
 
-        // ---- 1. Fetch iframe HTML ----
         val iframeHtml = fetchHtml(url, referer)
         if (iframeHtml != null) {
-            // ---- Direct .m3u8 URL ----
             val manifestRegex = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""")
             manifestRegex.find(iframeHtml)?.value?.let { manifestUrl ->
                 if (isValidManifest(manifestUrl, referer)) {
@@ -50,7 +47,6 @@ class Xtremestream : ExtractorApi() {
                 }
             }
 
-            // ---- JSON config: "file", "src", "url" ----
             val jsonRegex = Regex("\"(?:file|src|url|source)\"\\s*:\\s*\"([^\"]+)\"")
             jsonRegex.findAll(iframeHtml).forEach { match ->
                 val candidate = match.groupValues[1]
@@ -60,7 +56,6 @@ class Xtremestream : ExtractorApi() {
                 }
             }
 
-            // ---- <source> tags ----
             val sourceRegex = Regex("<source[^>]+src\\s*=\\s*\"([^\"]+)\"")
             sourceRegex.findAll(iframeHtml).forEach { match ->
                 val src = match.groupValues[1]
@@ -71,10 +66,8 @@ class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ---- 2. Try API endpoints ----
         if (tryApiPatterns(dataParam, referer, callback)) return
 
-        // ---- 3. Last resort: follow redirects ----
         val response = headWithRedirects(url, referer)
         val location = response.header("Location")
         if (location != null && location.endsWith(".m3u8")) {
@@ -134,7 +127,6 @@ class Xtremestream : ExtractorApi() {
         }.getOrThrow()
     }
 
-    // Helper to build headers with optional referer
     private fun buildHeaders(referer: String?): Headers {
         return Headers.Builder().apply {
             headers.forEach { (key, value) -> set(key, value) }
