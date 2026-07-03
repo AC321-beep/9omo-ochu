@@ -15,7 +15,7 @@ open class Xtremestream : ExtractorApi() {
 
     override suspend fun getUrl(
         url: String,
-        referer: String? = null,
+        referer: String?,  // no default – matches superclass
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
