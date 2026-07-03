@@ -2,8 +2,10 @@ package com.perverzija
 
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.*
+import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.util.concurrent.TimeUnit
 
 class Xtremestream : ExtractorApi() {
@@ -39,7 +41,7 @@ class Xtremestream : ExtractorApi() {
         // 1. Fetch iframe HTML
         val iframeHtml = fetchHtml(url, referer)
         if (iframeHtml != null) {
-            // ---- Direct .m3u8 URL ----
+            // Direct .m3u8 URL
             val manifestRegex = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""")
             manifestRegex.find(iframeHtml)?.value?.let { manifestUrl ->
                 if (isValidManifest(manifestUrl, referer)) {
@@ -48,7 +50,7 @@ class Xtremestream : ExtractorApi() {
                 }
             }
 
-            // ---- JSON config: "file", "src", "url" ----
+            // JSON config
             val jsonRegex = Regex("\"(?:file|src|url|source)\"\\s*:\\s*\"([^\"]+)\"")
             jsonRegex.findAll(iframeHtml).forEach { match ->
                 val candidate = match.groupValues[1]
@@ -58,7 +60,7 @@ class Xtremestream : ExtractorApi() {
                 }
             }
 
-            // ---- <source> tags ----
+            // <source> tags
             val sourceRegex = Regex("<source[^>]+src\\s*=\\s*\"([^\"]+)\"")
             sourceRegex.findAll(iframeHtml).forEach { match ->
                 val src = match.groupValues[1]
@@ -69,7 +71,7 @@ class Xtremestream : ExtractorApi() {
             }
         }
 
-        // 2. Try common API endpoints (no token)
+        // 2. Try common API endpoints
         val base = "https://pervl5.xtremestream.xyz"
         val candidates = listOf(
             "$base/api/video/$dataParam/master.m3u8",
