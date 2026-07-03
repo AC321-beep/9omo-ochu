@@ -2,10 +2,9 @@ package com.perverzija
 
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.*
-import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
+import okhttp3.Headers
 import java.util.concurrent.TimeUnit
 
 class Xtremestream : ExtractorApi() {
@@ -41,7 +40,7 @@ class Xtremestream : ExtractorApi() {
         // 1. Fetch iframe HTML
         val iframeHtml = fetchHtml(url, referer)
         if (iframeHtml != null) {
-            // Direct .m3u8 URL
+            // ---- Direct .m3u8 URL ----
             val manifestRegex = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""")
             manifestRegex.find(iframeHtml)?.value?.let { manifestUrl ->
                 if (isValidManifest(manifestUrl, referer)) {
@@ -50,7 +49,7 @@ class Xtremestream : ExtractorApi() {
                 }
             }
 
-            // JSON config
+            // ---- JSON config: "file", "src", "url" ----
             val jsonRegex = Regex("\"(?:file|src|url|source)\"\\s*:\\s*\"([^\"]+)\"")
             jsonRegex.findAll(iframeHtml).forEach { match ->
                 val candidate = match.groupValues[1]
@@ -60,7 +59,7 @@ class Xtremestream : ExtractorApi() {
                 }
             }
 
-            // <source> tags
+            // ---- <source> tags ----
             val sourceRegex = Regex("<source[^>]+src\\s*=\\s*\"([^\"]+)\"")
             sourceRegex.findAll(iframeHtml).forEach { match ->
                 val src = match.groupValues[1]
@@ -118,7 +117,7 @@ class Xtremestream : ExtractorApi() {
         }.getOrNull()
     }
 
-    private suspend fun headWithRedirects(url: String, referer: String?): Response {
+    private suspend fun headWithRedirects(url: String, referer: String?): okhttp3.Response {
         return runCatching {
             val request = Request.Builder()
                 .url(url)
@@ -130,11 +129,11 @@ class Xtremestream : ExtractorApi() {
     }
 
     private fun buildHeaders(referer: String?): Headers {
-        return Headers.Builder().apply {
-            headers.forEach { (key, value) -> set(key, value) }
-            referer?.let { set("Referer", it) }
-            set("Origin", mainUrl)
-        }.build()
+        val builder = Headers.Builder()
+        headers.forEach { (key, value) -> builder.add(key, value) }
+        referer?.let { builder.add("Referer", it) }
+        builder.add("Origin", mainUrl)
+        return builder.build()
     }
 
     private suspend fun createLink(url: String, referer: String?): ExtractorLink {
