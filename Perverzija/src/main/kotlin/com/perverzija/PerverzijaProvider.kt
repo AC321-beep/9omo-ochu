@@ -102,28 +102,33 @@ class Perverzija : MainAPI() {
     }
 
     override suspend fun loadLinks(
-        data: String,
-        isCasting: Boolean,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ): Boolean {
-        // 1. Extract the iframe URL from the main page
-        val document = app.get(data, interceptor = cfInterceptor).document
-        val iframeUrl = document.select("div#player-embed iframe").attr("src")
-        if (iframeUrl.isBlank()) return false
-
-        // 2. Try built‑in extractors on the iframe (handles common players)
-        if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
-            return true
-        }
-
-        // 3. Fallback to our custom extractor
-        var linkFound = false
-        val wrapperCallback: (ExtractorLink) -> Unit = { link ->
-            linkFound = true
-            callback(link)
-        }
-        Xtremestream().getUrl(iframeUrl, data, subtitleCallback, wrapperCallback)
-        return linkFound
+    data: String,
+    isCasting: Boolean,
+    subtitleCallback: (SubtitleFile) -> Unit,
+    callback: (ExtractorLink) -> Unit
+): Boolean {
+    // Force VideoJS
+    val fixedUrl = if (data.contains("?link=")) {
+        data.replace(Regex("[?&]link=\\d+"), "?link=1")
+    } else {
+        "$data?link=1"
     }
+
+    val document = app.get(fixedUrl, interceptor = cfInterceptor, headers = browserHeaders).document
+    val iframeUrl = document.select("div#player-embed iframe").attr("src")
+    if (iframeUrl.isBlank()) return false
+
+    // Try built-in extractors (they won't work, but we keep it)
+    if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
+        return true
+    }
+
+    // Use our custom extractor (no token)
+    var linkFound = false
+    val wrapperCallback: (ExtractorLink) -> Unit = { link ->
+        linkFound = true
+        callback(link)
+    }
+    Xtremestream().getUrl(iframeUrl, fixedUrl, subtitleCallback, wrapperCallback)
+    return linkFound
 }
