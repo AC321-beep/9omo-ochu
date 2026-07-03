@@ -108,7 +108,7 @@ class Perverzija : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // ---- STEP 1: Try to get direct video URL via the download button ----
+        // Try direct download button
         val directUrl = fetchVideoFromDownloadButton(data)
         if (directUrl != null) {
             callback.invoke(
@@ -116,15 +116,16 @@ class Perverzija : MainAPI() {
                     source = name,
                     name = name,
                     url = directUrl,
-                    type = if (directUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE,
-                    quality = guessQuality(directUrl),
-                    headers = mapOf("Referer" to data)
-                )
+                    type = if (directUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+                ) {
+                    this.quality = guessQuality(directUrl)
+                    this.headers = mapOf("Referer" to data)
+                }
             )
             return true
         }
 
-        // ---- STEP 2: Fallback – extract iframe and try built‑in extractor ----
+        // Fallback to iframe
         val document = app.get(data, interceptor = cfInterceptor).document
         val iframeUrl = document.select("div#player-embed iframe").attr("src")
         if (iframeUrl.isBlank()) return false
@@ -133,7 +134,6 @@ class Perverzija : MainAPI() {
             return true
         }
 
-        // ---- STEP 3: Use custom extractor on the iframe ----
         var linkFound = false
         val wrapperCallback: (ExtractorLink) -> Unit = { link ->
             linkFound = true
@@ -143,7 +143,6 @@ class Perverzija : MainAPI() {
         return linkFound
     }
 
-    // ---------- Helper: fetch video URL from the download button ----------
     private suspend fun fetchVideoFromDownloadButton(videoPageUrl: String): String? {
         val doc = app.get(videoPageUrl, interceptor = cfInterceptor).document
         val btn = doc.selectFirst("button.download-button") ?: return null
@@ -154,7 +153,6 @@ class Perverzija : MainAPI() {
         val mdjtoken = btn.attr("data-mdjtoken")
         val postId = doc.selectFirst("div#video-toolbar")?.attr("data-post-id") ?: return null
 
-        // List of possible AJAX actions (found in common WordPress download plugins)
         val actions = listOf(
             "download_video",
             "get_video_link",
@@ -182,7 +180,6 @@ class Perverzija : MainAPI() {
                 )
                 val body = response.text
                 if (body.isNotBlank()) {
-                    // Try to parse JSON
                     val json = JSONObject(body)
                     val url = json.optString("url").takeIf { it.isNotBlank() }
                         ?: json.optString("video_url")
@@ -190,7 +187,7 @@ class Perverzija : MainAPI() {
                     if (!url.isNullOrBlank()) return url
                 }
             } catch (_: Exception) {
-                // Continue to next action
+                // continue
             }
         }
         return null
