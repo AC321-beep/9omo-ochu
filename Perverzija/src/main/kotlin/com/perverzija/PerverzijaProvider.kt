@@ -14,16 +14,6 @@ class Perverzija : MainAPI() {
 
     private val cfInterceptor = CloudflareKiller()
 
-    // Realistic browser headers (copied from your JS.txt request)
-    private val browserHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language" to "en-US,en;q=0.5",
-        "Accept-Encoding" to "gzip, deflate, br",
-        "Connection" to "keep-alive",
-        "Upgrade-Insecure-Requests" to "1"
-    )
-
     override val mainPage = mainPageOf(
         "$mainUrl/page/%d/" to "Home",
         "$mainUrl/tag/creampie/page/%d/" to "Creampie",
@@ -44,16 +34,14 @@ class Perverzija : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val document = app.get(
-            request.data.format(page),
-            interceptor = cfInterceptor,
-            timeout = 100L,
-            headers = browserHeaders
-        ).document
-        val home = document.select("div.row div div.post").mapNotNull { it.toSearchResult() }
+        val document = app.get(request.data.format(page), interceptor = cfInterceptor, timeout = 100L).document
+        val home = document.select("div.row div div.post").mapNotNull {
+            it.toSearchResult()
+        }
         return newHomePageResponse(
-            list = HomePageList(name = request.name, list = home, isHorizontalImages = true),
-            hasNext = true
+            list = HomePageList(
+                name = request.name, list = home, isHorizontalImages = true
+            ), hasNext = true
         )
     }
 
@@ -61,14 +49,18 @@ class Perverzija : MainAPI() {
         val posterUrl = fixUrlNull(this.select("dt a img").attr("src"))
         val title = this.select("dd a").text() ?: return null
         val href = fixUrlNull(this.select("dt a").attr("href")) ?: return null
-        return newMovieSearchResponse(title, href, TvType.NSFW) { this.posterUrl = posterUrl }
+        return newMovieSearchResponse(title, href, TvType.NSFW) {
+            this.posterUrl = posterUrl
+        }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
         val posterUrl = fixUrlNull(this.select("div.item-thumbnail img").attr("src"))
         val title = this.select("div.item-head a").text() ?: return null
         val href = fixUrlNull(this.select("div.item-head a").attr("href")) ?: return null
-        return newMovieSearchResponse(title, href, TvType.NSFW) { this.posterUrl = posterUrl }
+        return newMovieSearchResponse(title, href, TvType.NSFW) {
+            this.posterUrl = posterUrl
+        }
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList? {
@@ -77,20 +69,29 @@ class Perverzija : MainAPI() {
         } else {
             "$mainUrl/tag/$query/page/$page/"
         }
-        val results = app.get(url, interceptor = cfInterceptor, headers = browserHeaders).document
-            .select("div.row div div.post").mapNotNull { it.toSearchResult() }
-            .distinctBy { it.url }
-        return newSearchResponseList(results, results.isNotEmpty())
+        val results = app.get(url, interceptor = cfInterceptor).document
+            .select("div.row div div.post").mapNotNull {
+                it.toSearchResult()
+            }.distinctBy { it.url }
+        val hasNext = if (results.isEmpty()) false else true
+        return newSearchResponseList(results, hasNext)
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url, interceptor = cfInterceptor, headers = browserHeaders).document
+        val document = app.get(url, interceptor = cfInterceptor).document
         val poster = document.select("div#featured-img-id img").attr("src")
         val title = document.select("div.title-info h1.light-title.entry-title").text()
-        val description = document.select("div.item-content p").joinToString("\n") { it.text() }
+        val pTags = document.select("div.item-content p")
+        val description = StringBuilder().apply {
+            pTags.forEach {
+                append(it.text())
+            }
+        }.toString()
         val tags = document.select("div.item-tax-list div a").map { it.text() }
-        val recommendations = document.select("div.related-gallery dl.gallery-item")
-            .mapNotNull { it.toRecommendationResult() }
+        val recommendations =
+            document.select("div.related-gallery dl.gallery-item").mapNotNull {
+                it.toRecommendationResult()
+            }
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.plot = description
@@ -105,7 +106,7 @@ class Perverzija : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Force VideoJS (player=1) – the only working player
+        // Force VideoJS (player=1)
         val fixedUrl = if (data.contains("?link=")) {
             data.replace(Regex("[?&]link=\\d+"), "?link=1")
         } else {
@@ -113,16 +114,16 @@ class Perverzija : MainAPI() {
         }
 
         // Fetch the main page to get the iframe URL
-        val document = app.get(fixedUrl, interceptor = cfInterceptor, headers = browserHeaders).document
+        val document = app.get(fixedUrl, interceptor = cfInterceptor).document
         val iframeUrl = document.select("div#player-embed iframe").attr("src")
         if (iframeUrl.isBlank()) return false
 
-        // Try built‑in extractors (they won't work, but we keep for compatibility)
+        // Try built‑in extractors first
         if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
             return true
         }
 
-        // Use our custom extractor
+        // Fallback to our custom extractor
         var found = false
         val wrapper: (ExtractorLink) -> Unit = {
             found = true
