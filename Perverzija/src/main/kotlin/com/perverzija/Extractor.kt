@@ -11,8 +11,7 @@ class Xtremestream : ExtractorApi() {
     override var mainUrl = "https://pervl5.xtremestream.xyz"
     override val requiresReferer = true
 
-    // Browser-like headers
-    private val headers = mapOf(
+    private val browserHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.5",
@@ -22,7 +21,6 @@ class Xtremestream : ExtractorApi() {
         "Referer" to mainUrl
     )
 
-    // Cookie jar to persist session
     private val cookieJar = PersistentCookieJar()
     private val client = OkHttpClient.Builder()
         .cookieJar(cookieJar)
@@ -40,10 +38,10 @@ class Xtremestream : ExtractorApi() {
         val dataParam = url.substringAfter("data=").substringBefore("&")
         if (dataParam.isBlank()) return
 
-        // ----- Step 1: Fetch iframe HTML to get cookies and possibly embedded manifest -----
+        // Fetch iframe HTML
         val iframeHtml = fetchHtml(url, referer)
         if (iframeHtml != null) {
-            // ----- Look for direct manifest URL in HTML or JavaScript -----
+            // Direct .m3u8 URL
             val manifestRegex = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""")
             manifestRegex.find(iframeHtml)?.value?.let { manifestUrl ->
                 if (isValidManifest(manifestUrl, referer)) {
@@ -52,7 +50,7 @@ class Xtremestream : ExtractorApi() {
                 }
             }
 
-            // ----- Look for JSON config with "file" or "src" -----
+            // JSON config with "file"/"src"/"url"
             val jsonRegex = Regex("\"(?:file|src|url)\"\\s*:\\s*\"([^\"]+)\"")
             jsonRegex.findAll(iframeHtml).forEach { match ->
                 val candidate = match.groupValues[1]
@@ -62,7 +60,7 @@ class Xtremestream : ExtractorApi() {
                 }
             }
 
-            // ----- Try to find any video element sources -----
+            // <source> tags
             val sourceRegex = Regex("<source[^>]+src\\s*=\\s*\"([^\"]+)\"")
             sourceRegex.findAll(iframeHtml).forEach { match ->
                 val src = match.groupValues[1]
@@ -73,7 +71,7 @@ class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ----- Step 2: If not found, try API endpoints with the cookies we have -----
+        // API candidates
         val base = url.substringBefore("/player/")
         val candidates = listOf(
             "$base/api/video/$dataParam/master.m3u8",
@@ -90,8 +88,7 @@ class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ----- Step 3: Last resort – try to follow any redirect that the iframe might have -----
-        // Some players redirect to the manifest after setting a cookie
+        // Follow redirects
         val headResponse = headWithRedirects(url, referer)
         val location = headResponse.header("Location")
         if (location != null && location.endsWith(".m3u8")) {
@@ -105,9 +102,10 @@ class Xtremestream : ExtractorApi() {
             val request = Request.Builder()
                 .url(url)
                 .head()
-                .headers(Headers.of(headers.toMutableMap().apply {
-                    referer?.let { put("Referer", it) }
-                }))
+                .apply {
+                    browserHeaders.forEach { (key, value) -> header(key, value) }
+                    referer?.let { header("Referer", it) }
+                }
                 .build()
             val response = client.newCall(request).execute()
             response.isSuccessful && (response.body?.contentLength() ?: 0) > 0
@@ -118,9 +116,10 @@ class Xtremestream : ExtractorApi() {
         return runCatching {
             val request = Request.Builder()
                 .url(url)
-                .headers(Headers.of(headers.toMutableMap().apply {
-                    referer?.let { put("Referer", it) }
-                }))
+                .apply {
+                    browserHeaders.forEach { (key, value) -> header(key, value) }
+                    referer?.let { header("Referer", it) }
+                }
                 .build()
             client.newCall(request).execute().body?.string()
         }.getOrNull()
@@ -131,15 +130,17 @@ class Xtremestream : ExtractorApi() {
             val request = Request.Builder()
                 .url(url)
                 .head()
-                .headers(Headers.of(headers.toMutableMap().apply {
-                    referer?.let { put("Referer", it) }
-                }))
+                .apply {
+                    browserHeaders.forEach { (key, value) -> header(key, value) }
+                    referer?.let { header("Referer", it) }
+                }
                 .build()
             client.newCall(request).execute()
         }.getOrThrow()
     }
 
-    private fun createLink(url: String, referer: String?): ExtractorLink {
+    // Make createLink a suspend function so we can call newExtractorLink inside it
+    private suspend fun createLink(url: String, referer: String?): ExtractorLink {
         return newExtractorLink(
             source = name,
             name = name,
@@ -147,7 +148,7 @@ class Xtremestream : ExtractorApi() {
             type = ExtractorLinkType.M3U8
         ) {
             this.quality = guessQuality(url)
-            this.headers = headers.toMutableMap().apply {
+            this.headers = browserHeaders.toMutableMap().apply {
                 referer?.let { put("Referer", it) }
                 put("Origin", mainUrl)
             }
