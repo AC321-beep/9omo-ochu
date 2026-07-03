@@ -1,17 +1,35 @@
 package com.perverzija
 
 import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.utils.*
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.jsoup.Jsoup
+import okhttp3.*
+import java.net.HttpURLConnection
+import java.util.concurrent.TimeUnit
 
-open class Xtremestream : ExtractorApi() {
+class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
-    override var mainUrl = "https://pervl4.xtremestream.xyz"
+    override var mainUrl = "https://pervl5.xtremestream.xyz"
     override val requiresReferer = true
-    private val client = OkHttpClient()
+
+    // Browser-like headers
+    private val headers = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language" to "en-US,en;q=0.5",
+        "Accept-Encoding" to "gzip, deflate, br",
+        "Connection" to "keep-alive",
+        "Origin" to mainUrl,
+        "Referer" to mainUrl
+    )
+
+    // Cookie jar to persist session
+    private val cookieJar = PersistentCookieJar()
+    private val client = OkHttpClient.Builder()
+        .cookieJar(cookieJar)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
 
     override suspend fun getUrl(
         url: String,
@@ -19,118 +37,129 @@ open class Xtremestream : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val html = fetchHtml(url) ?: return
+        val dataParam = url.substringAfter("data=").substringBefore("&")
+        if (dataParam.isBlank()) return
 
-        // --- Strategy 1: Direct <video> / <source> tags ---
-        extractFromHtml(html, url)?.forEach { callback.invoke(it) } ?: run {
-            // --- Strategy 2: JavaScript variables (typical for this player) ---
-            extractFromScript(html, url)?.forEach { callback.invoke(it) } ?: run {
-                // --- Strategy 3: JSON config inside scripts ---
-                extractFromJson(html, url)?.forEach { callback.invoke(it) } ?: run {
-                    // --- Strategy 4: Guess manifest from the 'data' parameter ---
-                    val dataParam = url.substringAfter("data=").substringBefore("&")
-                    if (dataParam.isNotBlank()) {
-                        val base = url.substringBefore("/player/")
-                        listOf(
-                            "$base/api/video/$dataParam/master.m3u8",
-                            "$base/api/manifest/$dataParam",
-                            "$base/manifest/$dataParam.m3u8"
-                        ).forEach { manifest ->
-                            callback.invoke(
-                                createLink(manifest, url, quality = 0, isM3u8 = true)
-                            )
-                        }
-                    }
+        // ----- Step 1: Fetch iframe HTML to get cookies and possibly embedded manifest -----
+        val iframeHtml = fetchHtml(url, referer)
+        if (iframeHtml != null) {
+            // ----- Look for direct manifest URL in HTML or JavaScript -----
+            val manifestRegex = Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)""")
+            manifestRegex.find(iframeHtml)?.value?.let { manifestUrl ->
+                if (isValidManifest(manifestUrl, referer)) {
+                    callback(createLink(manifestUrl, referer))
+                    return
+                }
+            }
+
+            // ----- Look for JSON config with "file" or "src" -----
+            val jsonRegex = Regex("\"(?:file|src|url)\"\\s*:\\s*\"([^\"]+)\"")
+            jsonRegex.findAll(iframeHtml).forEach { match ->
+                val candidate = match.groupValues[1]
+                if (candidate.endsWith(".m3u8") && isValidManifest(candidate, referer)) {
+                    callback(createLink(candidate, referer))
+                    return
+                }
+            }
+
+            // ----- Try to find any video element sources -----
+            val sourceRegex = Regex("<source[^>]+src\\s*=\\s*\"([^\"]+)\"")
+            sourceRegex.findAll(iframeHtml).forEach { match ->
+                val src = match.groupValues[1]
+                if (src.endsWith(".m3u8") && isValidManifest(src, referer)) {
+                    callback(createLink(src, referer))
+                    return
                 }
             }
         }
+
+        // ----- Step 2: If not found, try API endpoints with the cookies we have -----
+        val base = url.substringBefore("/player/")
+        val candidates = listOf(
+            "$base/api/video/$dataParam/master.m3u8",
+            "$base/api/manifest/$dataParam",
+            "$base/manifest/$dataParam.m3u8",
+            "$base/video/$dataParam/master.m3u8",
+            "$base/api/v1/manifest?data=$dataParam"
+        )
+
+        for (candidate in candidates) {
+            if (isValidManifest(candidate, referer)) {
+                callback(createLink(candidate, referer))
+                return
+            }
+        }
+
+        // ----- Step 3: Last resort – try to follow any redirect that the iframe might have -----
+        // Some players redirect to the manifest after setting a cookie
+        val headResponse = headWithRedirects(url, referer)
+        val location = headResponse.header("Location")
+        if (location != null && location.endsWith(".m3u8")) {
+            callback(createLink(location, referer))
+            return
+        }
     }
 
-    private suspend fun fetchHtml(url: String): String? {
+    private suspend fun isValidManifest(url: String, referer: String?): Boolean {
         return runCatching {
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", USER_AGENT)
-                .header("Referer", url)
+                .head()
+                .headers(Headers.of(headers.toMutableMap().apply {
+                    referer?.let { put("Referer", it) }
+                }))
+                .build()
+            val response = client.newCall(request).execute()
+            response.isSuccessful && (response.body?.contentLength() ?: 0) > 0
+        }.getOrDefault(false)
+    }
+
+    private suspend fun fetchHtml(url: String, referer: String?): String? {
+        return runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .headers(Headers.of(headers.toMutableMap().apply {
+                    referer?.let { put("Referer", it) }
+                }))
                 .build()
             client.newCall(request).execute().body?.string()
         }.getOrNull()
     }
 
-    private suspend fun extractFromHtml(html: String, pageUrl: String): List<ExtractorLink>? {
-        val doc = Jsoup.parse(html)
-        val sources = doc.select("video source[src]").map { it.attr("src") } +
-                doc.select("video[src]").map { it.attr("src") }
-        return if (sources.isNotEmpty()) {
-            sources.map { src ->
-                createLink(src, pageUrl, quality = guessQuality(src), isM3u8 = src.contains(".m3u8"))
-            }
-        } else null
+    private suspend fun headWithRedirects(url: String, referer: String?): Response {
+        return runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .head()
+                .headers(Headers.of(headers.toMutableMap().apply {
+                    referer?.let { put("Referer", it) }
+                }))
+                .build()
+            client.newCall(request).execute()
+        }.getOrThrow()
     }
 
-    private suspend fun extractFromScript(html: String, pageUrl: String): List<ExtractorLink>? {
-        // This player often defines video_id and m3u8_loader_url in a script
-        val script = Jsoup.parse(html).selectXpath("//script[contains(text(),'var video_id')]").html()
-        if (script.isBlank()) return null
-
-        val videoId = script.substringAfter("var video_id = `").substringBefore("`;")
-        val loaderUrl = script.substringAfter("var m3u8_loader_url = `").substringBefore("`;")
-        if (videoId.isBlank() || loaderUrl.isBlank()) return null
-
-        return listOf(1080, 720, 480, 360).map { quality ->
-            val link = "${loaderUrl}/${videoId}&q=${quality}"
-            createLink(link, pageUrl, quality = quality, isM3u8 = true)
-        }
-    }
-
-    private suspend fun extractFromJson(html: String, pageUrl: String): List<ExtractorLink>? {
-        // Common JSON patterns used in Plyr/VideoJS configurations
-        val patterns = listOf(
-            Regex(""""file"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
-            Regex(""""src"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
-            Regex(""""url"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
-            Regex(""""source"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
-            Regex(""""video"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
-            Regex(""""link"\s*:\s*"([^"]+\.(mp4|m3u8))""")
-        )
-        for (pattern in patterns) {
-            val match = pattern.find(html)
-            val videoUrl = match?.groupValues?.get(1)
-            if (!videoUrl.isNullOrBlank()) {
-                return listOf(
-                    createLink(videoUrl, pageUrl, quality = guessQuality(videoUrl), isM3u8 = videoUrl.contains(".m3u8"))
-                )
-            }
-        }
-        return null
-    }
-
-    private suspend fun createLink(
-        url: String,
-        referer: String,
-        quality: Int = 0,
-        isM3u8: Boolean = false
-    ): ExtractorLink {
+    private fun createLink(url: String, referer: String?): ExtractorLink {
         return newExtractorLink(
             source = name,
             name = name,
             url = url,
-            type = if (isM3u8) ExtractorLinkType.M3U8 else INFER_TYPE
+            type = ExtractorLinkType.M3U8
         ) {
-            this.quality = quality
-            this.headers = mapOf(
-                "Referer" to referer,
-                "User-Agent" to USER_AGENT
-            )
+            this.quality = guessQuality(url)
+            this.headers = headers.toMutableMap().apply {
+                referer?.let { put("Referer", it) }
+                put("Origin", mainUrl)
+            }
         }
     }
 
     private fun guessQuality(url: String): Int {
         return when {
-            url.contains("1080") || url.contains("1080p") -> 1080
-            url.contains("720") || url.contains("720p") -> 720
-            url.contains("480") || url.contains("480p") -> 480
-            url.contains("360") || url.contains("360p") -> 360
+            url.contains("1080") -> 1080
+            url.contains("720") -> 720
+            url.contains("480") -> 480
+            url.contains("360") -> 360
             else -> 0
         }
     }
