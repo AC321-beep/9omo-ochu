@@ -1,25 +1,10 @@
 package com.perverzija
 
-import com.lagradost.cloudstream3.HomePageList
-import com.lagradost.cloudstream3.HomePageResponse
-import com.lagradost.cloudstream3.LoadResponse
-import com.lagradost.cloudstream3.MainAPI
-import com.lagradost.cloudstream3.MainPageRequest
-import com.lagradost.cloudstream3.SearchResponse
-import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.TvType
-import com.lagradost.cloudstream3.app
-import com.lagradost.cloudstream3.fixUrlNull
-import com.lagradost.cloudstream3.mainPageOf
+import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
-import com.lagradost.cloudstream3.newHomePageResponse
-import com.lagradost.cloudstream3.newMovieLoadResponse
-import com.lagradost.cloudstream3.SearchResponseList
-import com.lagradost.cloudstream3.newSearchResponseList
-import com.lagradost.cloudstream3.newMovieSearchResponse
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
+import org.json.JSONObject
 
 class Perverzija : MainAPI() {
     override var name = "Perverzija"
@@ -55,7 +40,6 @@ class Perverzija : MainAPI() {
         val home = document.select("div.row div div.post").mapNotNull {
             it.toSearchResult()
         }
-
         return newHomePageResponse(
             list = HomePageList(
                 name = request.name, list = home, isHorizontalImages = true
@@ -124,32 +108,101 @@ class Perverzija : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val response = app.get(data, interceptor = cfInterceptor)
-        val document = response.document
-
-        val iframeUrl = document.select("div#player-embed iframe").attr("src")
-        if (iframeUrl.isBlank()) {
-            return false
-        }
-
-        // Stage 1: Try CloudStream's built‑in extractor on the main video page URL.
-        // This often works because the page contains the player embed information.
-        if (loadExtractor(data, subtitleCallback, callback)) {
+        // ---- STEP 1: Try to get direct video URL via the download button ----
+        val directUrl = fetchVideoFromDownloadButton(data)
+        if (directUrl != null) {
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = name,
+                    url = directUrl,
+                    type = if (directUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE,
+                    quality = guessQuality(directUrl),
+                    headers = mapOf("Referer" to data)
+                )
+            )
             return true
         }
 
-        // Stage 2: Try our custom extractor on the iframe URL.
+        // ---- STEP 2: Fallback – extract iframe and try built‑in extractor ----
+        val document = app.get(data, interceptor = cfInterceptor).document
+        val iframeUrl = document.select("div#player-embed iframe").attr("src")
+        if (iframeUrl.isBlank()) return false
+
+        if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
+            return true
+        }
+
+        // ---- STEP 3: Use custom extractor on the iframe ----
         var linkFound = false
         val wrapperCallback: (ExtractorLink) -> Unit = { link ->
             linkFound = true
             callback(link)
         }
         Xtremestream().getUrl(iframeUrl, data, subtitleCallback, wrapperCallback)
-        if (linkFound) {
-            return true
-        }
+        return linkFound
+    }
 
-        // Stage 3: Fallback to loadExtractor on the iframe URL.
-        return loadExtractor(iframeUrl, subtitleCallback, callback)
+    // ---------- Helper: fetch video URL from the download button ----------
+    private suspend fun fetchVideoFromDownloadButton(videoPageUrl: String): String? {
+        val doc = app.get(videoPageUrl, interceptor = cfInterceptor).document
+        val btn = doc.selectFirst("button.download-button") ?: return null
+
+        val folderid = btn.attr("data-folderid")
+        val xtremestream = btn.attr("data-xtremestream")
+        val token = btn.attr("data-token")
+        val mdjtoken = btn.attr("data-mdjtoken")
+        val postId = doc.selectFirst("div#video-toolbar")?.attr("data-post-id") ?: return null
+
+        // List of possible AJAX actions (found in common WordPress download plugins)
+        val actions = listOf(
+            "download_video",
+            "get_video_link",
+            "get_download_link",
+            "video_download",
+            "xtremestream_download"
+        )
+
+        for (action in actions) {
+            try {
+                val response = app.post(
+                    url = "$mainUrl/wp-admin/admin-ajax.php",
+                    data = mapOf(
+                        "action" to action,
+                        "folderid" to folderid,
+                        "xtremestream" to xtremestream,
+                        "token" to token,
+                        "mdjtoken" to mdjtoken,
+                        "post_id" to postId
+                    ),
+                    headers = mapOf(
+                        "Referer" to videoPageUrl,
+                        "User-Agent" to USER_AGENT
+                    )
+                )
+                val body = response.text
+                if (body.isNotBlank()) {
+                    // Try to parse JSON
+                    val json = JSONObject(body)
+                    val url = json.optString("url").takeIf { it.isNotBlank() }
+                        ?: json.optString("video_url")
+                        ?: json.optString("download_link")
+                    if (!url.isNullOrBlank()) return url
+                }
+            } catch (_: Exception) {
+                // Continue to next action
+            }
+        }
+        return null
+    }
+
+    private fun guessQuality(url: String): Int {
+        return when {
+            url.contains("1080") || url.contains("1080p") -> 1080
+            url.contains("720") || url.contains("720p") -> 720
+            url.contains("480") || url.contains("480p") -> 480
+            url.contains("360") || url.contains("360p") -> 360
+            else -> 0
+        }
     }
 }
