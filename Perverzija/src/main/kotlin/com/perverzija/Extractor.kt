@@ -4,16 +4,22 @@ import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.utils.*
+import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Headers  // ✅ added import
 import org.jsoup.Jsoup
+import java.util.concurrent.TimeUnit
 
 open class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
     override var mainUrl = "https://pervl5.xtremestream.xyz"
     override val requiresReferer = true
-    private val client = OkHttpClient()
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
 
     private val TAG = "PerverzijaExtractor"
 
@@ -27,6 +33,7 @@ open class Xtremestream : ExtractorApi() {
         Log.d(TAG, "URL: $url")
         Log.d(TAG, "Referer: $referer")
 
+        // First try with the given URL
         var found = tryExtract(url, referer, callback)
         if (found) {
             Log.d(TAG, "✅ Extraction succeeded with original URL")
@@ -35,6 +42,7 @@ open class Xtremestream : ExtractorApi() {
 
         Log.d(TAG, "⚠️ Extraction failed with original URL, trying VideoJS fallback...")
 
+        // If the current URL doesn't already use player=1, try forcing VideoJS
         if (!url.contains("player=1")) {
             val fixedUrl = if (url.contains("player=")) {
                 url.replace(Regex("[?&]player=\\d+"), "player=1")
@@ -65,7 +73,7 @@ open class Xtremestream : ExtractorApi() {
         val request = Request.Builder()
             .url(url)
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-            .header("Referer", referer.toString())
+            .header("Referer", referer ?: mainUrl)
             .header("User-Agent", USER_AGENT)
             .build()
 
@@ -78,7 +86,7 @@ open class Xtremestream : ExtractorApi() {
 
         Log.d(TAG, "📄 HTML length: ${html.length} chars")
 
-        // ----- Method 1: VideoJS specific pattern -----
+        // ----- Method 1: VideoJS specific pattern (var video_id, var m3u8_loader_url) -----
         val playerScript =
             Jsoup.parse(html).selectXpath("//script[contains(text(),'var video_id')]")
                 .html()
@@ -126,7 +134,7 @@ open class Xtremestream : ExtractorApi() {
             Log.d(TAG, "ℹ️ No 'var video_id' script found")
         }
 
-        // ----- Method 2: Generic – search for direct video URLs -----
+        // ----- Method 2: Generic – search for direct video URLs in the HTML -----
         val doc = Jsoup.parse(html)
         val videoUrls = mutableListOf<String>()
 
@@ -267,51 +275,13 @@ open class Xtremestream : ExtractorApi() {
         }.getOrDefault(false)
     }
 
-    private suspend fun fetchHtml(url: String, referer: String?): String? {
-        return runCatching {
-            val request = Request.Builder()
-                .url(url)
-                .headers(buildHeaders(referer))
-                .build()
-            client.newCall(request).execute().body?.string()
-        }.getOrNull()
-    }
-
-    private suspend fun headWithRedirects(url: String, referer: String?): okhttp3.Response {
-        return runCatching {
-            val request = Request.Builder()
-                .url(url)
-                .head()
-                .headers(buildHeaders(referer))
-                .build()
-            client.newCall(request).execute()
-        }.getOrThrow()
-    }
-
     private fun buildHeaders(referer: String?): Headers {
-        val builder = Headers.Builder()
-        builder.add("User-Agent", USER_AGENT)
-        builder.add("Accept", "*/*")
-        builder.add("Origin", mainUrl)
-        referer?.let { builder.add("Referer", it) }
-        return builder.build()
-    }
-
-    private suspend fun createLink(url: String, referer: String?): ExtractorLink {
-        return newExtractorLink(
-            name,
-            name,
-            url,
-            type = ExtractorLinkType.M3U8
-        ) {
-            this.quality = guessQuality(url)
-            this.referer = referer
-            this.headers = mapOf(
-                "Referer" to (referer ?: mainUrl),
-                "User-Agent" to USER_AGENT,
-                "Origin" to mainUrl
-            )
-        }
+        return Headers.Builder()
+            .add("User-Agent", USER_AGENT)
+            .add("Accept", "*/*")
+            .add("Referer", referer ?: mainUrl)
+            .add("Origin", mainUrl)
+            .build()
     }
 
     private fun guessQuality(url: String): Int {
