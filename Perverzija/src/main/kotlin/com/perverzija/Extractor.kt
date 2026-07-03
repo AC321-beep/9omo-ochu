@@ -4,17 +4,19 @@ import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.utils.*
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.jsoup.Jsoup
+import org.json.JSONObject
 import java.util.Base64
 
 open class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
-    override var mainUrl = "https://pervl5.xtremestream.xyz"  // dynamic, updated from page if needed
+    override var mainUrl = "https://pervl5.xtremestream.xyz"
     override val requiresReferer = true
     private val client = OkHttpClient()
-
     private val TAG = "PerverzijaExtractor"
 
     override suspend fun getUrl(
@@ -27,15 +29,12 @@ open class Xtremestream : ExtractorApi() {
         Log.d(TAG, "URL: $url")
         Log.d(TAG, "Referer: $referer")
 
-        // Try extraction with the given URL
         if (tryExtract(url, referer, callback)) {
-            Log.d(TAG, "✅ Extraction succeeded with original URL")
+            Log.d(TAG, "✅ Extraction succeeded")
             return
         }
 
-        Log.d(TAG, "⚠️ Extraction failed with original URL, trying VideoJS fallback...")
-
-        // Force VideoJS player if not already
+        // Fallback: try VideoJS mode
         if (!url.contains("player=1")) {
             val fixedUrl = if (url.contains("player=")) {
                 url.replace(Regex("[?&]player=\\d+"), "player=1")
@@ -68,175 +67,118 @@ open class Xtremestream : ExtractorApi() {
         val response = client.newCall(request).execute()
         val html = response.body?.string()
         if (html == null) {
-            Log.e(TAG, "❌ No HTML response from $url")
+            Log.e(TAG, "❌ No HTML response")
             return false
         }
 
         Log.d(TAG, "📄 HTML length: ${html.length} chars")
         val doc = Jsoup.parse(html)
 
-        // ------------------------------------------------------------------
-        // 1) Decode all base64-encoded scripts and search for video patterns
-        // ------------------------------------------------------------------
-        val decodedScripts = mutableListOf<String>()
-        val base64Scripts = doc.select("script[src^=data:text/javascript;base64,]")
-        base64Scripts.forEach { script ->
-            val src = script.attr("src")
-            val base64Data = src.substringAfter("base64,")
-            try {
-                val decoded = String(Base64.getDecoder().decode(base64Data))
-                decodedScripts.add(decoded)
-                Log.d(TAG, "🔓 Decoded base64 script (${decoded.length} chars)")
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to decode base64 script: ${e.message}")
-            }
-        }
-
-        // Search in decoded scripts for video URLs / tokens
-        val combinedScripts = decodedScripts.joinToString("\n")
-        val videoUrls = mutableListOf<String>()
-
-        // Patterns to find m3u8 or mp4 URLs
-        val urlPatterns = listOf(
-            Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)"""),
-            Regex("""(https?://[^\s"']+\.mp4[^\s"']*)"""),
-            Regex(""""file"\s*:\s*"([^"]+\.(m3u8|mp4))""""),
-            Regex(""""url"\s*:\s*"([^"]+\.(m3u8|mp4))""""),
-            Regex(""""src"\s*:\s*"([^"]+\.(m3u8|mp4))""""),
-            Regex(""""video"\s*:\s*"([^"]+\.(m3u8|mp4))""""),
-            Regex("""video_id\s*=\s*["']([^"']+)""""),
-            Regex("""m3u8_loader_url\s*=\s*["']([^"']+)""""),
-        )
-
-        urlPatterns.forEach { pattern ->
-            pattern.findAll(combinedScripts).forEach { match ->
-                val foundUrl = match.groupValues[1]
-                if (foundUrl.isNotBlank() && foundUrl !in videoUrls) {
-                    videoUrls.add(foundUrl)
-                    Log.d(TAG, "🔍 Found video URL in decoded script: $foundUrl")
-                }
-            }
-        }
-
-        // Also search in the plain HTML for additional URLs
-        val htmlPatterns = listOf(
-            Regex("""(https?://[^\s"']+\.(m3u8|mp4))"""),
-            Regex(""""file"\s*:\s*"([^"]+\.(m3u8|mp4))""""),
-        )
-        htmlPatterns.forEach { pattern ->
-            pattern.findAll(html).forEach { match ->
-                val foundUrl = match.groupValues[1]
-                if (foundUrl.isNotBlank() && foundUrl !in videoUrls) {
-                    videoUrls.add(foundUrl)
-                    Log.d(TAG, "🔍 Found video URL in HTML: $foundUrl")
-                }
-            }
-        }
-
-        // If we found any video URLs, return them
-        if (videoUrls.isNotEmpty()) {
-            videoUrls.forEach { videoUrl ->
-                val isM3u8 = videoUrl.contains(".m3u8")
-                callback.invoke(
-                    newExtractorLink(
-                        name,
-                        name,
-                        videoUrl,
-                        type = if (isM3u8) ExtractorLinkType.M3U8 else INFER_TYPE
-                    ) {
-                        this.referer = url
-                        this.quality = guessQuality(videoUrl)
-                        this.headers = mapOf(
-                            "Referer" to url,
-                            "User-Agent" to USER_AGENT
-                        )
-                    }
-                )
-            }
-            return true
-        }
-
-        // ------------------------------------------------------------------
-        // 2) Try to use tokens from the download button to construct API URLs
-        // ------------------------------------------------------------------
+        // -------------------------------------------------------------
+        // 1) Download API – most reliable
+        // -------------------------------------------------------------
         val downloadButton = doc.selectFirst("button.download-button")
         if (downloadButton != null) {
             val folderId = downloadButton.attr("data-folderid")
             val token = downloadButton.attr("data-token")
-            val mdjToken = downloadButton.attr("data-mdjtoken")
             val xtreme = downloadButton.attr("data-xtremestream")
-            Log.d(TAG, "📥 Found download button: folderId=$folderId, token=$token, mdjToken=$mdjToken, xtreme=$xtreme")
 
-            if (folderId.isNotBlank() && (token.isNotBlank() || mdjToken.isNotBlank())) {
-                // Use the domain from the button or from the URL
-                val baseDomain = if (xtreme.isNotBlank()) "https://$xtreme.xtremestream.xyz" else url.substringBefore("/player/")
-                val possibleEndpoints = mutableListOf<String>()
-
-                // Common API patterns
-                val endpoints = listOf(
-                    "/api/video/%s?token=%s",
-                    "/api/video/%s?mdjtoken=%s",
-                    "/api/video/%s?token=%s&mdjtoken=%s",
-                    "/api/video/%s/master.m3u8?token=%s",
-                    "/api/video/%s/master.m3u8?mdjtoken=%s",
-                    "/api/video/%s/master.m3u8?token=%s&mdjtoken=%s",
-                    "/api/video/%s/manifest.m3u8?token=%s",
-                    "/api/manifest/%s?token=%s",
-                    "/manifest/%s.m3u8?token=%s",
-                )
-
-                endpoints.forEach { endpoint ->
-                    if (token.isNotBlank() && endpoint.contains("token")) {
-                        possibleEndpoints.add(baseDomain + endpoint.format(folderId, token))
-                    }
-                    if (mdjToken.isNotBlank() && endpoint.contains("mdjtoken")) {
-                        possibleEndpoints.add(baseDomain + endpoint.format(folderId, mdjToken))
-                    }
-                    if (token.isNotBlank() && mdjToken.isNotBlank() && endpoint.contains("token") && endpoint.contains("mdjtoken")) {
-                        possibleEndpoints.add(baseDomain + endpoint.format(folderId, token, mdjToken))
-                    }
-                }
-
-                // Also try with just folderId (no token) as fallback
-                possibleEndpoints.add("$baseDomain/api/video/$folderId/master.m3u8")
-                possibleEndpoints.add("$baseDomain/api/manifest/$folderId")
-                possibleEndpoints.add("$baseDomain/manifest/$folderId.m3u8")
-
-                // Remove duplicates and add as links
-                possibleEndpoints.distinct().forEach { manifestUrl ->
+            if (folderId.isNotBlank() && token.isNotBlank() && xtreme.isNotBlank()) {
+                Log.d(TAG, "📥 Found download button: folder=$folderId, token=$token, xtreme=$xtreme")
+                val directUrl = fetchDownloadLink(folderId, token, xtreme, url)
+                if (directUrl != null) {
+                    Log.d(TAG, "📦 Direct link: $directUrl")
+                    val type = if (directUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
                     callback.invoke(
                         newExtractorLink(
                             name,
                             name,
-                            manifestUrl,
-                            type = ExtractorLinkType.M3U8
+                            directUrl,
+                            type = type
                         ) {
                             this.referer = url
-                            this.quality = 0
+                            this.quality = guessQuality(directUrl)
                             this.headers = mapOf(
                                 "Referer" to url,
                                 "User-Agent" to USER_AGENT
                             )
                         }
                     )
+                    return true
                 }
-                return true
             }
         }
 
-        // ------------------------------------------------------------------
-        // 3) Fallback: try to guess from the URL parameters
-        // ------------------------------------------------------------------
+        // -------------------------------------------------------------
+        // 2) Decode base64 scripts and search for video URLs
+        // -------------------------------------------------------------
+        val decodedScripts = mutableListOf<String>()
+        doc.select("script[src^=data:text/javascript;base64,]").forEach { script ->
+            val base64Data = script.attr("src").substringAfter("base64,")
+            try {
+                decodedScripts.add(String(Base64.getDecoder().decode(base64Data)))
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+
+        val combined = decodedScripts.joinToString("\n")
+        val videoUrls = mutableSetOf<String>()
+
+        // Patterns for m3u8/mp4
+        listOf(
+            Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)"""),
+            Regex("""(https?://[^\s"']+\.mp4[^\s"']*)"""),
+            Regex(""""file"\s*:\s*"([^"]+\.(m3u8|mp4))""""),
+            Regex(""""url"\s*:\s*"([^"]+\.(m3u8|mp4))""""),
+            Regex(""""src"\s*:\s*"([^"]+\.(m3u8|mp4))""""),
+            Regex("""video_id\s*=\s*["']([^"']+)""""),
+            Regex("""m3u8_loader_url\s*=\s*["']([^"']+)""""),
+        ).forEach { pattern ->
+            pattern.findAll(combined).forEach { match ->
+                match.groupValues[1].takeIf { it.isNotBlank() }?.let { videoUrls.add(it) }
+            }
+        }
+
+        // Also plain HTML
+        listOf(
+            Regex("""(https?://[^\s"']+\.(m3u8|mp4))"""),
+            Regex(""""file"\s*:\s*"([^"]+\.(m3u8|mp4))""""),
+        ).forEach { pattern ->
+            pattern.findAll(html).forEach { match ->
+                match.groupValues[1].takeIf { it.isNotBlank() }?.let { videoUrls.add(it) }
+            }
+        }
+
+        if (videoUrls.isNotEmpty()) {
+            videoUrls.forEach { videoUrl ->
+                callback.invoke(
+                    newExtractorLink(
+                        name,
+                        name,
+                        videoUrl,
+                        type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+                    ) {
+                        this.referer = url
+                        this.quality = guessQuality(videoUrl)
+                        this.headers = mapOf("Referer" to url, "User-Agent" to USER_AGENT)
+                    }
+                )
+            }
+            return true
+        }
+
+        // -------------------------------------------------------------
+        // 3) Fallback: guess from URL parameters
+        // -------------------------------------------------------------
         val dataParam = url.substringAfter("data=").substringBefore("&")
         if (dataParam.isNotBlank()) {
             val baseUrl = url.substringBefore("/player/")
-            val possibleUrls = listOf(
+            listOf(
                 "$baseUrl/api/video/$dataParam/master.m3u8",
                 "$baseUrl/api/manifest/$dataParam",
                 "$baseUrl/manifest/$dataParam.m3u8"
-            )
-            Log.d(TAG, "🧪 Trying guessed API URLs: $possibleUrls")
-            possibleUrls.forEach { manifestUrl ->
+            ).forEach { manifestUrl ->
                 callback.invoke(
                     newExtractorLink(
                         name,
@@ -246,18 +188,56 @@ open class Xtremestream : ExtractorApi() {
                     ) {
                         this.referer = url
                         this.quality = 0
-                        this.headers = mapOf(
-                            "Referer" to url,
-                            "User-Agent" to USER_AGENT
-                        )
+                        this.headers = mapOf("Referer" to url, "User-Agent" to USER_AGENT)
                     }
                 )
             }
             return true
         }
 
-        Log.w(TAG, "❌ All extraction methods failed for $url")
+        Log.w(TAG, "❌ No link found")
         return false
+    }
+
+    /**
+     * Calls the official download API to obtain a direct video URL.
+     */
+    private suspend fun fetchDownloadLink(
+        folderId: String,
+        token: String,
+        xtreme: String,
+        referer: String
+    ): String? {
+        try {
+            val apiUrl = "https://download.xtremestream.xyz/generateLinkForPlayer" +
+                    "?folder=$folderId&xtremestream=$xtreme&token=$token"
+            val json = """{"folder":"$folderId","xtremestream":"$xtreme"}"""
+            val body = json.toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url(apiUrl)
+                .post(body)
+                .header("Referer", referer)
+                .header("User-Agent", USER_AGENT)
+                .header("Origin", "https://$xtreme.xtremestream.xyz")
+                .header("Accept", "application/json")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+            if (response.isSuccessful && responseBody != null) {
+                val jsonResponse = JSONObject(responseBody)
+                val link = jsonResponse.optString("link")
+                if (link.isNotBlank()) {
+                    return "https://download.xtremestream.xyz$link"
+                }
+            } else {
+                Log.w(TAG, "Download API error: ${response.code}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Download API exception: ${e.message}")
+        }
+        return null
     }
 
     private fun guessQuality(url: String): Int {
