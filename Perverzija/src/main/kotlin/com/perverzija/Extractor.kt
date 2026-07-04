@@ -16,7 +16,7 @@ import java.util.Base64
 
 open class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
-    override var mainUrl = "https://pervl4.xtremestream.xyz" // fallback
+    override var mainUrl = "https://pervl4.xtremestream.xyz"
     override val requiresReferer = true
     private val client = OkHttpClient()
     private val TAG = "PerverzijaExtractor"
@@ -51,7 +51,7 @@ open class Xtremestream : ExtractorApi() {
 
         val doc = Jsoup.parse(html)
 
-        // ----- METHOD 1: var video_id script (primary) -----
+        // ----- METHOD 1: var video_id script -----
         val playerScript = doc.selectXpath("//script[contains(text(),'var video_id')]").html()
         if (playerScript.isNotBlank()) {
             val videoId = playerScript.substringAfter("var video_id = `").substringBefore("`;")
@@ -135,7 +135,7 @@ open class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ----- METHOD 5: Decode base64 scripts (more reliable than guessed endpoints) -----
+        // ----- METHOD 5: Base64‑decoded scripts -----
         Log.d(TAG, "Methods 1-3 failed, trying base64 script decoding...")
         val decodedScripts = mutableListOf<String>()
         doc.select("script[src^=data:text/javascript;base64,]").forEach { script ->
@@ -222,8 +222,7 @@ open class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ----- METHOD 4: Guess from data parameter (last resort) -----
-        // We do NOT return from this method – the player will try these links as a fallback.
+        // ----- METHOD 4: Guessed endpoints (LAST RESORT, no return) -----
         Log.d(TAG, "All other methods failed, trying guessed endpoints as a fallback...")
         val dataParam = url.substringAfter("data=").substringBefore("&")
         if (dataParam.isNotBlank()) {
