@@ -164,16 +164,45 @@ open class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ----- METHOD 6: Official download API (improved) -----
+        // ----- METHOD 6: Try to get download button from player page or download page -----
         Log.d(TAG, "Base64 decoding failed, trying download API...")
-        val downloadButton = doc.selectFirst("button.download-button")
+        var downloadButton = doc.selectFirst("button.download-button")
+        var downloadHtml = html
+        var downloadDoc = doc
+
+        // If the button is not on the player page, fetch the download page
+        if (downloadButton == null) {
+            val dataParam = url.substringAfter("data=").substringBefore("&")
+            if (dataParam.isNotBlank()) {
+                val baseUrl = url.substringBefore("/player/")
+                val downloadPageUrl = "$baseUrl/player/index_page.php?data=$dataParam"
+                Log.d(TAG, "No download button on player page, fetching download page: $downloadPageUrl")
+                val downloadPageRequest = Request.Builder()
+                    .url(downloadPageUrl)
+                    .header("Referer", url)
+                    .header("User-Agent", USER_AGENT)
+                    .build()
+                try {
+                    val downloadPageResponse = client.newCall(downloadPageRequest).execute()
+                    val pageHtml = downloadPageResponse.body?.string()
+                    if (pageHtml != null) {
+                        downloadHtml = pageHtml
+                        downloadDoc = Jsoup.parse(pageHtml)
+                        downloadButton = downloadDoc.selectFirst("button.download-button")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to fetch download page: ${e.message}")
+                }
+            }
+        }
+
         if (downloadButton != null) {
             val folderId = downloadButton.attr("data-folderid")
             val token = downloadButton.attr("data-token")
             val xtreme = downloadButton.attr("data-xtremestream")
             if (folderId.isNotBlank() && token.isNotBlank() && xtreme.isNotBlank()) {
                 try {
-                    // Try POST first (matching the page's fetch)
+                    // Try POST first
                     val encodedToken = URLEncoder.encode(token, "UTF-8")
                     val apiUrl = "https://download.xtremestream.xyz/generateLinkForPlayer" +
                             "?folder=$folderId&xtremestream=$xtreme&token=$encodedToken"
@@ -194,7 +223,6 @@ open class Xtremestream : ExtractorApi() {
                     Log.d(TAG, "Download API response (POST): $responseBody")
                     if (apiResponse.isSuccessful && responseBody != null) {
                         val jsonResponse = JSONObject(responseBody)
-                        // Try different keys: "link", "url", "video", "download"
                         val link = jsonResponse.optString("link").takeIf { it.isNotBlank() }
                             ?: jsonResponse.optString("url").takeIf { it.isNotBlank() }
                             ?: jsonResponse.optString("video").takeIf { it.isNotBlank() }
@@ -217,15 +245,15 @@ open class Xtremestream : ExtractorApi() {
                                     )
                                 }
                             )
-                            Log.d(TAG, "✅ Method 6 (download API) succeeded: $directUrl")
+                            Log.d(TAG, "✅ Method 6 (download API POST) succeeded: $directUrl")
                             return
                         }
                     }
 
-                    // If POST fails or returns no link, try GET
+                    // If POST fails, try GET
                     Log.d(TAG, "POST gave no link, trying GET...")
                     val getRequest = Request.Builder()
-                        .url(apiUrl) // same URL with query params
+                        .url(apiUrl)
                         .get()
                         .header("Referer", url)
                         .header("User-Agent", USER_AGENT)
@@ -270,7 +298,7 @@ open class Xtremestream : ExtractorApi() {
                 Log.w(TAG, "Download button missing required data attributes")
             }
         } else {
-            Log.w(TAG, "No download button found")
+            Log.w(TAG, "No download button found even after checking download page")
         }
 
         // ----- METHOD 4: Guessed endpoints (LAST RESORT) -----
