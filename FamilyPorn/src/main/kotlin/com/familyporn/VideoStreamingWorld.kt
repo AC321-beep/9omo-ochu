@@ -1,11 +1,11 @@
-package com.familypornhd
+package com.familyporn
 
 import android.util.Log
+import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
-import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 
 class VideoStreamingWorld : ExtractorApi() {
     override val name = "VideoStreamingWorld"
@@ -42,7 +42,7 @@ class VideoStreamingWorld : ExtractorApi() {
             referer = "$mainUrl/"
         )
 
-        val mapper = jacksonObjectMapper().registerKotlinModule()
+        val mapper = jacksonObjectMapper()
         val video: Video = mapper.readValue(response)
         val videoUrl = video.videoSource
 
