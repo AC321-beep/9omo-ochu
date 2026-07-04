@@ -4,17 +4,13 @@ import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.utils.*
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.jsoup.Jsoup
-import org.json.JSONObject
-import java.net.URLEncoder
 
 open class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
-    override var mainUrl = "https://pervl4.xtremestream.xyz"
+    override var mainUrl = "https://pervl4.xtremestream.xyz" // fallback, not critical
     override val requiresReferer = true
     private val client = OkHttpClient()
     private val TAG = "PerverzijaExtractor"
@@ -130,7 +126,7 @@ open class Xtremestream : ExtractorApi() {
             return
         }
 
-        // ----- METHOD 3: look for JSON config inside scripts (common in new players) -----
+        // ----- METHOD 3: look for JSON config inside scripts -----
         val jsonPatterns = listOf(
             Regex(""""file"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
             Regex(""""src"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
@@ -163,7 +159,7 @@ open class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ----- METHOD 4: Try to guess the manifest URL from the data parameter -----
+        // ----- METHOD 4: guess manifest from data parameter (uses URL’s base) -----
         val dataParam = url.substringAfter("data=").substringBefore("&")
         if (dataParam.isNotBlank()) {
             val baseUrl = url.substringBefore("/player/")
@@ -193,72 +189,7 @@ open class Xtremestream : ExtractorApi() {
             return
         }
 
-        // ----- METHOD 5 (NEW): Fallback to the official download API -----
-        Log.d(TAG, "⚠️ All previous methods failed, trying download API fallback...")
-        val downloadButton = doc.selectFirst("button.download-button")
-        if (downloadButton != null) {
-            val folderId = downloadButton.attr("data-folderid")
-            val token = downloadButton.attr("data-token")
-            val xtreme = downloadButton.attr("data-xtremestream")
-
-            if (folderId.isNotBlank() && token.isNotBlank() && xtreme.isNotBlank()) {
-                Log.d(TAG, "📥 Download button found: folder=$folderId, token=$token, xtreme=$xtreme")
-                try {
-                    val encodedToken = URLEncoder.encode(token, "UTF-8")
-                    val encodedFolder = URLEncoder.encode(folderId, "UTF-8")
-                    val apiUrl = "https://download.xtremestream.xyz/generateLinkForPlayer" +
-                            "?folder=$encodedFolder&xtremestream=$xtreme&token=$encodedToken"
-
-                    val json = """{"folder":"$folderId","xtremestream":"$xtreme"}"""
-                    val body = json.toRequestBody("application/json".toMediaType())
-
-                    val apiRequest = Request.Builder()
-                        .url(apiUrl)
-                        .post(body)
-                        .header("Referer", url)
-                        .header("User-Agent", USER_AGENT)
-                        .header("Origin", "https://$xtreme.xtremestream.xyz")
-                        .header("Accept", "application/json")
-                        .build()
-
-                    val apiResponse = client.newCall(apiRequest).execute()
-                    val responseBody = apiResponse.body?.string()
-                    if (apiResponse.isSuccessful && responseBody != null) {
-                        Log.d(TAG, "API response: $responseBody")
-                        val jsonResponse = JSONObject(responseBody)
-                        val link = jsonResponse.optString("link")
-                        if (link.isNotBlank()) {
-                            val directUrl = if (link.startsWith("http")) link else "https://download.xtremestream.xyz$link"
-                            Log.d(TAG, "📦 Direct link: $directUrl")
-                            val type = if (directUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
-                            callback.invoke(
-                                newExtractorLink(
-                                    name,
-                                    name,
-                                    directUrl,
-                                    type = type
-                                ) {
-                                    this.referer = url
-                                    this.quality = guessQuality(directUrl)
-                                    this.headers = mapOf(
-                                        "Referer" to url,
-                                        "User-Agent" to USER_AGENT,
-                                        "Origin" to "https://$xtreme.xtremestream.xyz"
-                                    )
-                                }
-                            )
-                            return
-                        }
-                    } else {
-                        Log.w(TAG, "Download API error: ${apiResponse.code}")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Download API exception: ${e.message}")
-                }
-            }
-        }
-
-        Log.w(TAG, "❌ No link found by any method")
+        Log.w(TAG, "❌ No link found")
     }
 
     private fun guessQuality(url: String): Int {
