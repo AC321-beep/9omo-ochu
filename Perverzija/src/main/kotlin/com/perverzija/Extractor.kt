@@ -1,16 +1,14 @@
 package com.perverzija
 
-import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.utils.*
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.json.JSONObject
 import java.net.URL
 import java.net.URLEncoder
@@ -21,7 +19,6 @@ open class Xtremestream : ExtractorApi() {
     override var mainUrl = "https://pervl4.xtremestream.xyz"
     override val requiresReferer = true
     private val client = OkHttpClient()
-    private val TAG = "PerverzijaExtractor"
 
     override suspend fun getUrl(
         url: String,
@@ -34,53 +31,30 @@ open class Xtremestream : ExtractorApi() {
             mainUrl = "${parsed.protocol}://${parsed.host}"
         } catch (_: Exception) { }
 
-        Log.d(TAG, "Extracting from: $url (mainUrl: $mainUrl)")
-
-        // ----- METHOD 0: Fast xs1.php endpoint (from kraptor) -----
-        // This works for many videos without any HTML fetching.
-        // If it returns 404, the player will automatically fall back to the other links.
+        // ----- Method 0: xs1.php (instant) -----
         val xs1Url = url.replace("index.php", "xs1.php")
-        val qualities = listOf(1080, 720, 480)
-        qualities.forEach { quality ->
-            val manifestUrl = "$xs1Url&q=$quality"
+        listOf(1080, 720, 480).forEach { quality ->
             callback.invoke(
                 newExtractorLink(
                     name,
                     name,
-                    manifestUrl,
+                    "$xs1Url&q=$quality",
                     type = ExtractorLinkType.M3U8
                 ) {
                     this.quality = quality
                     this.referer = url
-                    this.headers = mapOf<String, String>(
+                    this.headers = mapOf(
                         "Referer" to url,
                         "User-Agent" to USER_AGENT
                     )
                 }
             )
         }
-        Log.d(TAG, "✅ Added xs1 links for qualities: $qualities")
 
-        // Fetch iframe and referer in parallel (if referer is provided)
-        // This ensures fallback links are ready quickly if xs1 fails.
-        val (iframeHtml, refererHtml) = coroutineScope {
-            val iframeDeferred = async {
-                fetchHtml(url, referer)
-            }
-            val refererDeferred = async {
-                if (referer != null) fetchHtml(referer, referer) else null
-            }
-            Pair(iframeDeferred.await(), refererDeferred.await())
-        }
+        val iframeHtml = fetchHtml(url, referer) ?: return
+        val doc: Document = Jsoup.parse(iframeHtml)
 
-        if (iframeHtml == null) {
-            Log.e(TAG, "No HTML response from iframe")
-            return
-        }
-
-        val doc = Jsoup.parse(iframeHtml)
-
-        // ----- METHOD 1: var video_id script -----
+        // ----- Method 1: var video_id script -----
         val playerScript = doc.selectXpath("//script[contains(text(),'var video_id')]").html()
         if (playerScript.isNotBlank()) {
             val videoId = playerScript.substringAfter("var video_id = `").substringBefore("`;")
@@ -96,7 +70,7 @@ open class Xtremestream : ExtractorApi() {
                         ) {
                             this.quality = resolution
                             this.referer = url
-                            this.headers = mapOf<String, String>(
+                            this.headers = mapOf(
                                 "Accept" to "*/*",
                                 "Referer" to url,
                                 "User-Agent" to USER_AGENT
@@ -104,12 +78,11 @@ open class Xtremestream : ExtractorApi() {
                         }
                     )
                 }
-                Log.d(TAG, "✅ Method 1 succeeded")
                 return
             }
         }
 
-        // ----- METHOD 2: <video> / <source> tags & regex -----
+        // ----- Method 2: <video> / <source> tags & regex -----
         val videoUrls = mutableSetOf<String>()
         doc.select("video source").forEach { source ->
             source.attr("src").takeIf { it.isNotBlank() }?.let { videoUrls.add(it) }
@@ -131,18 +104,17 @@ open class Xtremestream : ExtractorApi() {
                     ) {
                         this.referer = url
                         this.quality = guessQuality(videoUrl)
-                        this.headers = mapOf<String, String>(
+                        this.headers = mapOf(
                             "Referer" to url,
                             "User-Agent" to USER_AGENT
                         )
                     }
                 )
             }
-            Log.d(TAG, "✅ Method 2 succeeded")
             return
         }
 
-        // ----- METHOD 3: JSON config in scripts -----
+        // ----- Method 3: JSON config in scripts -----
         val jsonPatterns = listOf(
             Regex(""""file"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
             Regex(""""src"\s*:\s*"([^"]+\.(mp4|m3u8))"""),
@@ -162,20 +134,18 @@ open class Xtremestream : ExtractorApi() {
                         ) {
                             this.referer = url
                             this.quality = guessQuality(videoUrl)
-                            this.headers = mapOf<String, String>(
+                            this.headers = mapOf(
                                 "Referer" to url,
                                 "User-Agent" to USER_AGENT
                             )
                         }
                     )
-                    Log.d(TAG, "✅ Method 3 succeeded")
                     return
                 }
             }
         }
 
-        // ----- METHOD 5: Base64‑decoded scripts -----
-        Log.d(TAG, "Methods 1-3 failed, trying base64 script decoding...")
+        // ----- Method 4: Base64‑decoded scripts -----
         val decodedScripts = mutableListOf<String>()
         doc.select("script[src^=data:text/javascript;base64,]").forEach { script ->
             val base64Data = script.attr("src").substringAfter("base64,")
@@ -196,27 +166,23 @@ open class Xtremestream : ExtractorApi() {
                     ) {
                         this.referer = url
                         this.quality = guessQuality(videoUrl)
-                        this.headers = mapOf<String, String>(
+                        this.headers = mapOf(
                             "Referer" to url,
                             "User-Agent" to USER_AGENT
                         )
                     }
                 )
-                Log.d(TAG, "✅ Method 5 succeeded")
                 return
             }
         }
 
-        // ----- METHOD 6: Download API -----
-        Log.d(TAG, "Base64 decoding failed, trying download API...")
+        // ----- Method 5: Download API (fetch referer if needed) -----
         var downloadButton = doc.selectFirst("button.download-button")
-
-        // If not found in iframe, use the referer HTML we already fetched (if available)
-        if (downloadButton == null && refererHtml != null) {
-            val refererDoc = Jsoup.parse(refererHtml)
-            downloadButton = refererDoc.selectFirst("button.download-button")
-            if (downloadButton != null) {
-                Log.d(TAG, "✅ Found download button in pre-fetched referer page")
+        if (downloadButton == null && referer != null) {
+            val refererHtml = fetchHtml(referer, referer)
+            if (refererHtml != null) {
+                val refererDoc: Document = Jsoup.parse(refererHtml)
+                downloadButton = refererDoc.selectFirst("button.download-button")
             }
         }
 
@@ -244,7 +210,6 @@ open class Xtremestream : ExtractorApi() {
 
                     val apiResponse = client.newCall(apiRequest).execute()
                     val responseBody = apiResponse.body?.string()
-                    Log.d(TAG, "Download API response (POST): $responseBody")
                     if (apiResponse.isSuccessful && responseBody != null) {
                         val jsonResponse = JSONObject(responseBody)
                         val link = jsonResponse.optString("link").takeIf { it.isNotBlank() }
@@ -262,27 +227,21 @@ open class Xtremestream : ExtractorApi() {
                                 ) {
                                     this.referer = referer ?: url
                                     this.quality = guessQuality(directUrl)
-                                    this.headers = mapOf<String, String>(
+                                    this.headers = mapOf(
                                         "Referer" to (referer ?: url),
                                         "User-Agent" to USER_AGENT,
                                         "Origin" to "https://$xtreme.xtremestream.xyz"
                                     )
                                 }
                             )
-                            Log.d(TAG, "✅ Method 6 (download API) succeeded: $directUrl")
                             return
                         }
-                    } else {
-                        Log.w(TAG, "Download API returned ${apiResponse.code}")
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Download API exception: ${e.message}")
-                }
+                } catch (_: Exception) { }
             }
         }
 
-        // ----- METHOD 4: Guessed endpoints (LAST RESORT) -----
-        Log.d(TAG, "All other methods failed, trying guessed endpoints as a fallback...")
+        // ----- Method 6: Guessed endpoints (last resort) -----
         val dataParam = url.substringAfter("data=").substringBefore("&")
         if (dataParam.isNotBlank()) {
             listOf(
@@ -299,17 +258,14 @@ open class Xtremestream : ExtractorApi() {
                     ) {
                         this.referer = referer ?: url
                         this.quality = 0
-                        this.headers = mapOf<String, String>(
+                        this.headers = mapOf(
                             "Referer" to (referer ?: url),
                             "User-Agent" to USER_AGENT
                         )
                     }
                 )
             }
-            Log.d(TAG, "✅ Method 4 (guessed) added links as fallback")
         }
-
-        Log.w(TAG, "❌ No video link found")
     }
 
     private suspend fun fetchHtml(url: String, referer: String?): String? {
@@ -321,8 +277,7 @@ open class Xtremestream : ExtractorApi() {
                 .header("User-Agent", USER_AGENT)
                 .build()
             client.newCall(request).execute().body?.string()
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to fetch $url: ${e.message}")
+        } catch (_: Exception) {
             null
         }
     }
