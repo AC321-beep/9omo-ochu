@@ -16,7 +16,7 @@ import java.util.Base64
 
 open class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
-    override var mainUrl = "https://pervl4.xtremestream.xyz" // will be overridden
+    override var mainUrl = "https://pervl4.xtremestream.xyz" // will be dynamically set
     override val requiresReferer = true
     private val client = OkHttpClient()
     private val TAG = "PerverzijaExtractor"
@@ -35,7 +35,7 @@ open class Xtremestream : ExtractorApi() {
             val parsed = URL(url)
             mainUrl = "${parsed.protocol}://${parsed.host}"
         } catch (e: Exception) {
-            // fallback
+            // keep default
         }
         Log.d(TAG, "Using mainUrl: $mainUrl")
 
@@ -44,7 +44,7 @@ open class Xtremestream : ExtractorApi() {
             return
         }
 
-        // Fallback: VideoJS mode
+        // Fallback: VideoJS mode (player=1)
         if (!url.contains("player=1")) {
             val fixedUrl = if (url.contains("player=")) {
                 url.replace(Regex("[?&]player=\\d+"), "player=1")
@@ -85,7 +85,45 @@ open class Xtremestream : ExtractorApi() {
         val doc = Jsoup.parse(html)
 
         // -------------------------------------------------------------
-        // 1) Official Download API – most reliable
+        // PRIMARY METHOD: Extract video_id and m3u8_loader_url from script
+        // (this worked for most videos, now uses dynamic mainUrl)
+        // -------------------------------------------------------------
+        val playerScript = doc.selectXpath("//script[contains(text(),'var video_id')]").html()
+        if (playerScript.isNotBlank()) {
+            Log.d(TAG, "🔍 Found player script with var video_id")
+            val videoId = playerScript.substringAfter("var video_id = `").substringBefore("`;")
+            val m3u8LoaderUrl = playerScript.substringAfter("var m3u8_loader_url = `").substringBefore("`;")
+
+            if (videoId.isNotBlank() && m3u8LoaderUrl.isNotBlank()) {
+                Log.d(TAG, "videoId: $videoId")
+                Log.d(TAG, "m3u8LoaderUrl: $m3u8LoaderUrl")
+                val resolutions = listOf(1080, 720, 480)
+                resolutions.forEach { resolution ->
+                    val manifestUrl = "${m3u8LoaderUrl}/${videoId}&q=${resolution}"
+                    Log.d(TAG, "📦 Adding quality $resolution: $manifestUrl")
+                    callback.invoke(
+                        newExtractorLink(
+                            name,
+                            name,
+                            manifestUrl,
+                            type = ExtractorLinkType.M3U8
+                        ) {
+                            this.quality = resolution
+                            this.referer = url
+                            this.headers = mapOf(
+                                "Accept" to "*/*",
+                                "Referer" to url,
+                                "User-Agent" to USER_AGENT
+                            )
+                        }
+                    )
+                }
+                return true
+            }
+        }
+
+        // -------------------------------------------------------------
+        // FALLBACK 1: Official Download API (most reliable for problematic videos)
         // -------------------------------------------------------------
         val downloadButton = doc.selectFirst("button.download-button")
         if (downloadButton != null) {
@@ -121,7 +159,7 @@ open class Xtremestream : ExtractorApi() {
         }
 
         // -------------------------------------------------------------
-        // 2) Decode base64 scripts and search for video URLs
+        // FALLBACK 2: Decode base64 scripts and search for video URLs
         // -------------------------------------------------------------
         val decodedScripts = mutableListOf<String>()
         doc.select("script[src^=data:text/javascript;base64,]").forEach { script ->
@@ -177,7 +215,7 @@ open class Xtremestream : ExtractorApi() {
         }
 
         // -------------------------------------------------------------
-        // 3) Fallback: guess from URL parameters – use dynamic mainUrl
+        // FALLBACK 3: Guess from URL parameters (using dynamic mainUrl)
         // -------------------------------------------------------------
         val dataParam = url.substringAfter("data=").substringBefore("&")
         if (dataParam.isNotBlank()) {
