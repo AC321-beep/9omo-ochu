@@ -1,4 +1,4 @@
-package com.familypornhd
+package com.familyporn
 
 import android.util.Log
 import com.lagradost.cloudstream3.*
@@ -14,7 +14,6 @@ class FamilyPorn : MainAPI() {
     override val hasQuickSearch = false
     override val supportedTypes = setOf(TvType.NSFW)
 
-    // ---------- Companion object: shared Cloudflare bypass & network helpers ----------
     companion object Network {
         private val cfKiller = CloudflareKiller()
 
@@ -64,7 +63,6 @@ class FamilyPorn : MainAPI() {
         suspend fun getCookies(url: String): Map<String, String> = app.getCookies(url)
     }
 
-    // ---------- Main Page ----------
     override val mainPage = mainPageOf(
         "${mainUrl}" to "All Porn Videos",
         "${mainUrl}/tag/redhead" to "Red Head",
@@ -95,7 +93,6 @@ class FamilyPorn : MainAPI() {
         )
     }
 
-    // ---------- Search ----------
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = if (page == 1) "${mainUrl}/?s=${query}" else "${mainUrl}/page/$page/?s=${query}"
         val document = getDocument(url)
@@ -105,7 +102,6 @@ class FamilyPorn : MainAPI() {
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query).search
 
-    // ---------- Load Video ----------
     override suspend fun load(url: String): LoadResponse {
         val document = getDocument(url)
         val title = document.selectFirst("meta[property=og:title]")?.attr("content").orEmpty()
@@ -123,7 +119,6 @@ class FamilyPorn : MainAPI() {
         }
     }
 
-    // ---------- Load Links ----------
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -139,17 +134,16 @@ class FamilyPorn : MainAPI() {
         }
         Log.d("FamilyPorn", "iframe src: $iframeSrc")
 
+        // loadExtractor does NOT accept cookies parameter
         loadExtractor(
             url = iframeSrc,
             referer = data,
-            cookies = getCookies(data),
             subtitleCallback = subtitleCallback,
             callback = callback
         )
         return true
     }
 
-    // ---------- Helpers ----------
     private fun Element.toSearchResult(): SearchResponse? {
         val anchor = this.selectFirst("article a") ?: return null
         val title = anchor.attr("title")?.trim() ?: return null
