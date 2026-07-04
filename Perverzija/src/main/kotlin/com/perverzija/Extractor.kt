@@ -4,6 +4,8 @@ import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.utils.*
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -34,21 +36,49 @@ open class Xtremestream : ExtractorApi() {
 
         Log.d(TAG, "Extracting from: $url (mainUrl: $mainUrl)")
 
-        val request = Request.Builder()
-            .url(url)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-            .header("Referer", referer.toString())
-            .header("User-Agent", USER_AGENT)
-            .build()
+        // ----- METHOD 0: Fast xs1.php endpoint (from kraptor) -----
+        // This works for many videos without any HTML fetching.
+        // If it returns 404, the player will automatically fall back to the other links.
+        val xs1Url = url.replace("index.php", "xs1.php")
+        val qualities = listOf(1080, 720, 480)
+        qualities.forEach { quality ->
+            val manifestUrl = "$xs1Url&q=$quality"
+            callback.invoke(
+                newExtractorLink(
+                    name,
+                    name,
+                    manifestUrl,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.quality = quality
+                    this.referer = url
+                    this.headers = mapOf<String, String>(
+                        "Referer" to url,
+                        "User-Agent" to USER_AGENT
+                    )
+                }
+            )
+        }
+        Log.d(TAG, "✅ Added xs1 links for qualities: $qualities")
 
-        val response = client.newCall(request).execute()
-        val html = response.body?.string()
-        if (html == null) {
-            Log.e(TAG, "No HTML response")
+        // Fetch iframe and referer in parallel (if referer is provided)
+        // This ensures fallback links are ready quickly if xs1 fails.
+        val (iframeHtml, refererHtml) = coroutineScope {
+            val iframeDeferred = async {
+                fetchHtml(url, referer)
+            }
+            val refererDeferred = async {
+                if (referer != null) fetchHtml(referer, referer) else null
+            }
+            Pair(iframeDeferred.await(), refererDeferred.await())
+        }
+
+        if (iframeHtml == null) {
+            Log.e(TAG, "No HTML response from iframe")
             return
         }
 
-        val doc = Jsoup.parse(html)
+        val doc = Jsoup.parse(iframeHtml)
 
         // ----- METHOD 1: var video_id script -----
         val playerScript = doc.selectXpath("//script[contains(text(),'var video_id')]").html()
@@ -87,7 +117,7 @@ open class Xtremestream : ExtractorApi() {
         doc.selectFirst("video")?.let {
             it.attr("src").takeIf { it.isNotBlank() }?.let { videoUrls.add(it) }
         }
-        Regex("""(https?://[^\s"']+\.(mp4|m3u8))""").findAll(html).forEach { match ->
+        Regex("""(https?://[^\s"']+\.(mp4|m3u8))""").findAll(iframeHtml).forEach { match ->
             match.groupValues[1].takeIf { it.isNotBlank() }?.let { videoUrls.add(it) }
         }
         if (videoUrls.isNotEmpty()) {
@@ -120,7 +150,7 @@ open class Xtremestream : ExtractorApi() {
             Regex(""""source"\s*:\s*"([^"]+\.(mp4|m3u8))""")
         )
         jsonPatterns.forEach { pattern ->
-            pattern.findAll(html).forEach { match ->
+            pattern.findAll(iframeHtml).forEach { match ->
                 val videoUrl = match.groupValues[1]
                 if (videoUrl.isNotBlank()) {
                     callback.invoke(
@@ -177,31 +207,16 @@ open class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ----- METHOD 6: Download API (first try in iframe) -----
+        // ----- METHOD 6: Download API -----
         Log.d(TAG, "Base64 decoding failed, trying download API...")
         var downloadButton = doc.selectFirst("button.download-button")
 
-        // If not found, fetch the referer page (the main Perverzija page)
-        if (downloadButton == null && referer != null) {
-            Log.d(TAG, "Download button not found in iframe, fetching referer page: $referer")
-            try {
-                val refererRequest = Request.Builder()
-                    .url(referer)
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
-                    .header("Referer", referer)
-                    .header("User-Agent", USER_AGENT)
-                    .build()
-                val refererResponse = client.newCall(refererRequest).execute()
-                val refererHtml = refererResponse.body?.string()
-                if (refererHtml != null) {
-                    val refererDoc = Jsoup.parse(refererHtml)
-                    downloadButton = refererDoc.selectFirst("button.download-button")
-                    if (downloadButton != null) {
-                        Log.d(TAG, "✅ Found download button on referer page")
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to fetch referer page: ${e.message}")
+        // If not found in iframe, use the referer HTML we already fetched (if available)
+        if (downloadButton == null && refererHtml != null) {
+            val refererDoc = Jsoup.parse(refererHtml)
+            downloadButton = refererDoc.selectFirst("button.download-button")
+            if (downloadButton != null) {
+                Log.d(TAG, "✅ Found download button in pre-fetched referer page")
             }
         }
 
@@ -295,6 +310,21 @@ open class Xtremestream : ExtractorApi() {
         }
 
         Log.w(TAG, "❌ No video link found")
+    }
+
+    private suspend fun fetchHtml(url: String, referer: String?): String? {
+        return try {
+            val request = Request.Builder()
+                .url(url)
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+                .header("Referer", referer.toString())
+                .header("User-Agent", USER_AGENT)
+                .build()
+            client.newCall(request).execute().body?.string()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to fetch $url: ${e.message}")
+            null
+        }
     }
 
     private fun guessQuality(url: String): Int {
