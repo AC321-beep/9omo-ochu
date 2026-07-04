@@ -119,35 +119,36 @@ class Perverzija : MainAPI() {
     }
 
     override suspend fun loadLinks(
-    data: String,
-    isCasting: Boolean,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit
-): Boolean {
-    val response = app.get(data, interceptor = cfInterceptor)
-    val document = response.document
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        val response = app.get(data, interceptor = cfInterceptor)
+        val document = response.document
 
-    val iframeUrl = document.select("div#player-embed iframe").attr("src")
-    if (iframeUrl.isBlank()) {
-        return false
-    }
+        val iframeUrl = document.select("div#player-embed iframe").attr("src")
+        if (iframeUrl.isBlank()) {
+            return false
+        }
 
-    // Stage 1: Try our custom extractor directly on the iframe (most reliable).
-    var linkFound = false
-    val wrapperCallback: (ExtractorLink) -> Unit = { link ->
-        linkFound = true
-        callback(link)
-    }
-    Xtremestream().getUrl(iframeUrl, data, subtitleCallback, wrapperCallback)
-    if (linkFound) {
-        return true
-    }
+        // Stage 1: Try our custom extractor directly on the iframe (most reliable).
+        var linkFound = false
+        val wrapperCallback: (ExtractorLink) -> Unit = { link ->
+            linkFound = true
+            callback(link)
+        }
+        Xtremestream().getUrl(iframeUrl, data, subtitleCallback, wrapperCallback)
+        if (linkFound) {
+            return true
+        }
 
-    // Stage 2: Fallback to CloudStream's built‑in extractor on the main video page URL.
-    if (loadExtractor(data, subtitleCallback, callback)) {
-        return true
-    }
+        // Stage 2: Fallback to CloudStream's built‑in extractor on the main video page URL.
+        if (loadExtractor(data, subtitleCallback, callback)) {
+            return true
+        }
 
-    // Stage 3: Final fallback to built‑in extractor on the iframe URL.
-    return loadExtractor(iframeUrl, subtitleCallback, callback)
+        // Stage 3: Final fallback to built‑in extractor on the iframe URL.
+        return loadExtractor(iframeUrl, subtitleCallback, callback)
+    }
 }
