@@ -5,16 +5,9 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 class FamilyPorn : MainAPI() {
-    override var mainUrl = "https://familypornhd.com"
-    override var name = "FamilyPorn"
-    override val hasMainPage = true
-    override var lang = "en"
-    override val hasQuickSearch = false
-    override val supportedTypes = setOf(TvType.NSFW)
+    // ... your existing properties (mainUrl, name, etc.) ...
 
     companion object Network {
         private const val TAG = "FamilyPorn"
@@ -35,15 +28,18 @@ class FamilyPorn : MainAPI() {
             if (FamilyPornPlugin.cfCookies.contains("cf_clearance")) return
             Log.d(TAG, "Showing CF WebView dialog for $url")
             val activity = com.lagradost.cloudstream3.CommonActivity.activity ?: return
-            withContext(Dispatchers.Main) {
-                val dialog = CloudflareWebViewDialog(
-                    targetUrl = url,
-                    onFinished = { success ->
-                        if (success) Log.d(TAG, "CF solved, cookies saved")
-                        else Log.w(TAG, "CF dialog dismissed without solving")
-                    }
-                )
-                dialog.show(activity.supportFragmentManager, "familyporn_cf_bypass")
+            with(activity) {
+                runOnUiThread {
+                    val dialog = CloudflareWebViewDialog(
+                        context = this,
+                        targetUrl = url,
+                        onFinished = { success ->
+                            if (success) Log.d(TAG, "CF solved, cookies saved")
+                            else Log.w(TAG, "CF dialog dismissed without solving")
+                        }
+                    )
+                    dialog.show()
+                }
             }
         }
 
@@ -54,18 +50,18 @@ class FamilyPorn : MainAPI() {
             referer: String? = null
         ): Document {
             var response = app.get(
-                url,
-                headers = headers,
-                cookies = cookies,
+                url = url,
+                headers = headers ?: emptyMap(),
+                cookies = cookies ?: emptyMap(),
                 referer = referer,
                 interceptor = CFBypassInterceptor
             )
             if (isCloudflareBlocked(response)) {
                 showCFDialogIfNeeded(url)
                 response = app.get(
-                    url,
-                    headers = headers,
-                    cookies = cookies,
+                    url = url,
+                    headers = headers ?: emptyMap(),
+                    cookies = cookies ?: emptyMap(),
                     referer = referer,
                     interceptor = CFBypassInterceptor
                 )
@@ -80,18 +76,18 @@ class FamilyPorn : MainAPI() {
             referer: String? = null
         ): String {
             var response = app.get(
-                url,
-                headers = headers,
-                cookies = cookies,
+                url = url,
+                headers = headers ?: emptyMap(),
+                cookies = cookies ?: emptyMap(),
                 referer = referer,
                 interceptor = CFBypassInterceptor
             )
             if (isCloudflareBlocked(response)) {
                 showCFDialogIfNeeded(url)
                 response = app.get(
-                    url,
-                    headers = headers,
-                    cookies = cookies,
+                    url = url,
+                    headers = headers ?: emptyMap(),
+                    cookies = cookies ?: emptyMap(),
                     referer = referer,
                     interceptor = CFBypassInterceptor
                 )
@@ -107,20 +103,20 @@ class FamilyPorn : MainAPI() {
             referer: String? = null
         ): String {
             var response = app.post(
-                url,
-                data = data,
-                headers = headers,
-                cookies = cookies,
+                url = url,
+                data = data ?: emptyMap(),
+                headers = headers ?: emptyMap(),
+                cookies = cookies ?: emptyMap(),
                 referer = referer,
                 interceptor = CFBypassInterceptor
             )
             if (isCloudflareBlocked(response)) {
                 showCFDialogIfNeeded(url)
                 response = app.post(
-                    url,
-                    data = data,
-                    headers = headers,
-                    cookies = cookies,
+                    url = url,
+                    data = data ?: emptyMap(),
+                    headers = headers ?: emptyMap(),
+                    cookies = cookies ?: emptyMap(),
                     referer = referer,
                     interceptor = CFBypassInterceptor
                 )
@@ -128,9 +124,8 @@ class FamilyPorn : MainAPI() {
             return response.text
         }
 
-        suspend fun getCookies(url: String): Map<String, String> = app.getCookies(url)
+        // getCookies removed – not needed; cookies are handled by the interceptor
     }
 
-    // ---- MainPage, Search, Load, LoadLinks, and helpers remain exactly as before ----
-    // (No changes needed in those functions; they call the above network helpers.)
+    // ... the rest of your class (mainPage, getMainPage, search, load, loadLinks, helpers) remains exactly as before ...
 }
