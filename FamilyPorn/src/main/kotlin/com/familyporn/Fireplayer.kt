@@ -1,8 +1,11 @@
-package com.familypornhd
+package com.familyporn
 
 import android.util.Log
+import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 
 class Fireplayer : ExtractorApi() {
     override var name = "Fireplayer"
@@ -39,6 +42,8 @@ class Fireplayer : ExtractorApi() {
             referer = url
         )
 
+        // Use local mapper
+        val mapper = jacksonObjectMapper()
         val json = mapper.readValue(response, FireResponse::class.java)
         val videolink = json.securedlink ?: json.videosource
 
