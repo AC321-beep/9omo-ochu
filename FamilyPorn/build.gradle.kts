@@ -1,15 +1,11 @@
-version = 2
-
-android {
-    defaultConfig {
-    }
-}
-
 cloudstream {
-    description = "Mostly Asian Content "
-    authors = listOf(providers.gradleProperty("cs_author").orNull ?: "AC321-beep")
-    status = 1
-    tvTypes = listOf("AsianDrama", "Anime")
-    language = "en"
-    iconUrl = "https://kisskh.nl/favicon.ico"
+    authors     = listOf("AC321-beep")
+    language    = "en"
+    description = "FamilyPornHD It's a natural mix of the neighborhood stepmoms, older stepdads, barely legal stepsisters, and even the college going stepbrother falling into some serious family fun."
+    status      = 1              // 1 = working, 3 = broken
+    tvTypes     = listOf("NSFW")
+    version     = 1
+    iconUrl     = "https://www.google.com/s2/favicons?domain=familypornhd.com&sz=%size%"
 }
+
+
