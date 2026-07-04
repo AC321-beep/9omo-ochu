@@ -18,8 +18,6 @@ import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import org.jsoup.nodes.Element
 
 class Perverzija : MainAPI() {
@@ -30,7 +28,6 @@ class Perverzija : MainAPI() {
     override val hasDownloadSupport = true
     override val hasMainPage = true
 
-    // No CloudflareKiller – site doesn't need it
     override val mainPage = mainPageOf(
         "$mainUrl/page/%d/" to "Home",
         "$mainUrl/tag/creampie/page/%d/" to "Creampie",
@@ -51,13 +48,10 @@ class Perverzija : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val url = request.data.format(page)
-        // Fetch the page with a reasonable timeout
-        val document = app.get(url, timeout = 15000L).document
+        val document = app.get(request.data.format(page), timeout = 15000L).document
         val home = document.select("div.row div div.post").mapNotNull {
             it.toSearchResult()
         }
-
         return newHomePageResponse(
             list = HomePageList(
                 name = request.name, list = home, isHorizontalImages = true
@@ -128,7 +122,6 @@ class Perverzija : MainAPI() {
             return false
         }
 
-        // Stage 1: Fast custom extractor (xs1 only)
         var linkFound = false
         val wrapperCallback: (ExtractorLink) -> Unit = { link ->
             linkFound = true
@@ -139,7 +132,6 @@ class Perverzija : MainAPI() {
             return true
         }
 
-        // Stage 2: Fallback to built‑in extractors
         if (loadExtractor(data, subtitleCallback, callback)) {
             return true
         }
