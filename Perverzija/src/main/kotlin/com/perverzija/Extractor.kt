@@ -10,11 +10,13 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.jsoup.Jsoup
 import org.json.JSONObject
+import java.net.URL
+import java.net.URLEncoder
 import java.util.Base64
 
 open class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
-    override var mainUrl = "https://pervl5.xtremestream.xyz"
+    override var mainUrl = "https://pervl4.xtremestream.xyz" // will be overridden
     override val requiresReferer = true
     private val client = OkHttpClient()
     private val TAG = "PerverzijaExtractor"
@@ -27,14 +29,22 @@ open class Xtremestream : ExtractorApi() {
     ) {
         Log.d(TAG, "===== Starting extraction =====")
         Log.d(TAG, "URL: $url")
-        Log.d(TAG, "Referer: $referer")
+
+        // Dynamically set mainUrl from the input URL's base
+        try {
+            val parsed = URL(url)
+            mainUrl = "${parsed.protocol}://${parsed.host}"
+        } catch (e: Exception) {
+            // fallback
+        }
+        Log.d(TAG, "Using mainUrl: $mainUrl")
 
         if (tryExtract(url, referer, callback)) {
             Log.d(TAG, "✅ Extraction succeeded")
             return
         }
 
-        // Fallback: try VideoJS mode
+        // Fallback: VideoJS mode
         if (!url.contains("player=1")) {
             val fixedUrl = if (url.contains("player=")) {
                 url.replace(Regex("[?&]player=\\d+"), "player=1")
@@ -75,7 +85,7 @@ open class Xtremestream : ExtractorApi() {
         val doc = Jsoup.parse(html)
 
         // -------------------------------------------------------------
-        // 1) Download API – most reliable
+        // 1) Official Download API – most reliable
         // -------------------------------------------------------------
         val downloadButton = doc.selectFirst("button.download-button")
         if (downloadButton != null) {
@@ -84,7 +94,7 @@ open class Xtremestream : ExtractorApi() {
             val xtreme = downloadButton.attr("data-xtremestream")
 
             if (folderId.isNotBlank() && token.isNotBlank() && xtreme.isNotBlank()) {
-                Log.d(TAG, "📥 Found download button: folder=$folderId, token=$token, xtreme=$xtreme")
+                Log.d(TAG, "📥 Download button: folder=$folderId, token=$token, xtreme=$xtreme")
                 val directUrl = fetchDownloadLink(folderId, token, xtreme, url)
                 if (directUrl != null) {
                     Log.d(TAG, "📦 Direct link: $directUrl")
@@ -100,7 +110,8 @@ open class Xtremestream : ExtractorApi() {
                             this.quality = guessQuality(directUrl)
                             this.headers = mapOf(
                                 "Referer" to url,
-                                "User-Agent" to USER_AGENT
+                                "User-Agent" to USER_AGENT,
+                                "Origin" to "https://$xtreme.xtremestream.xyz"
                             )
                         }
                     )
@@ -117,15 +128,12 @@ open class Xtremestream : ExtractorApi() {
             val base64Data = script.attr("src").substringAfter("base64,")
             try {
                 decodedScripts.add(String(Base64.getDecoder().decode(base64Data)))
-            } catch (e: Exception) {
-                // ignore
-            }
+            } catch (e: Exception) { /* ignore */ }
         }
 
         val combined = decodedScripts.joinToString("\n")
         val videoUrls = mutableSetOf<String>()
 
-        // Patterns for m3u8/mp4
         listOf(
             Regex("""(https?://[^\s"']+\.m3u8[^\s"']*)"""),
             Regex("""(https?://[^\s"']+\.mp4[^\s"']*)"""),
@@ -169,16 +177,17 @@ open class Xtremestream : ExtractorApi() {
         }
 
         // -------------------------------------------------------------
-        // 3) Fallback: guess from URL parameters
+        // 3) Fallback: guess from URL parameters – use dynamic mainUrl
         // -------------------------------------------------------------
         val dataParam = url.substringAfter("data=").substringBefore("&")
         if (dataParam.isNotBlank()) {
-            val baseUrl = url.substringBefore("/player/")
-            listOf(
-                "$baseUrl/api/video/$dataParam/master.m3u8",
-                "$baseUrl/api/manifest/$dataParam",
-                "$baseUrl/manifest/$dataParam.m3u8"
-            ).forEach { manifestUrl ->
+            val possibleUrls = listOf(
+                "$mainUrl/api/video/$dataParam/master.m3u8",
+                "$mainUrl/api/manifest/$dataParam",
+                "$mainUrl/manifest/$dataParam.m3u8"
+            )
+            Log.d(TAG, "🧪 Guessing from mainUrl: $possibleUrls")
+            possibleUrls.forEach { manifestUrl ->
                 callback.invoke(
                     newExtractorLink(
                         name,
@@ -201,6 +210,7 @@ open class Xtremestream : ExtractorApi() {
 
     /**
      * Calls the official download API to obtain a direct video URL.
+     * Uses the subdomain from `xtreme` (or falls back to mainUrl's host).
      */
     private suspend fun fetchDownloadLink(
         folderId: String,
@@ -209,8 +219,12 @@ open class Xtremestream : ExtractorApi() {
         referer: String
     ): String? {
         try {
+            val encodedToken = URLEncoder.encode(token, "UTF-8")
+            val encodedFolder = URLEncoder.encode(folderId, "UTF-8")
+
             val apiUrl = "https://download.xtremestream.xyz/generateLinkForPlayer" +
-                    "?folder=$folderId&xtremestream=$xtreme&token=$token"
+                    "?folder=$encodedFolder&xtremestream=$xtreme&token=$encodedToken"
+
             val json = """{"folder":"$folderId","xtremestream":"$xtreme"}"""
             val body = json.toRequestBody("application/json".toMediaType())
 
@@ -226,13 +240,14 @@ open class Xtremestream : ExtractorApi() {
             val response = client.newCall(request).execute()
             val responseBody = response.body?.string()
             if (response.isSuccessful && responseBody != null) {
+                Log.d(TAG, "API response: $responseBody")
                 val jsonResponse = JSONObject(responseBody)
                 val link = jsonResponse.optString("link")
                 if (link.isNotBlank()) {
-                    return "https://download.xtremestream.xyz$link"
+                    return if (link.startsWith("http")) link else "https://download.xtremestream.xyz$link"
                 }
             } else {
-                Log.w(TAG, "Download API error: ${response.code}")
+                Log.w(TAG, "API error: ${response.code}")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Download API exception: ${e.message}")
