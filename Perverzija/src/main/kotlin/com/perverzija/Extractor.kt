@@ -27,7 +27,7 @@ open class Xtremestream : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Set mainUrl dynamically from the input URL (handles pervl4, pervl5, etc.)
+        // Set mainUrl dynamically from the input URL
         try {
             val parsed = URL(url)
             mainUrl = "${parsed.protocol}://${parsed.host}"
@@ -135,33 +135,8 @@ open class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ----- METHOD 4: Guess from data parameter (dynamic mainUrl) -----
-        val dataParam = url.substringAfter("data=").substringBefore("&")
-        if (dataParam.isNotBlank()) {
-            listOf(
-                "$mainUrl/api/video/$dataParam/master.m3u8",
-                "$mainUrl/api/manifest/$dataParam",
-                "$mainUrl/manifest/$dataParam.m3u8"
-            ).forEach { manifestUrl ->
-                callback.invoke(
-                    newExtractorLink(
-                        name,
-                        name,
-                        manifestUrl,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = url
-                        this.quality = 0
-                        this.headers = mapOf("Referer" to url, "User-Agent" to USER_AGENT)
-                    }
-                )
-            }
-            Log.d(TAG, "✅ Method 4 succeeded")
-            return
-        }
-
-        // ----- METHOD 5: Decode base64 scripts (last resort before API) -----
-        Log.d(TAG, "Methods 1-4 failed, trying base64 script decoding...")
+        // ----- METHOD 5: Decode base64 scripts (more reliable than guessed endpoints) -----
+        Log.d(TAG, "Methods 1-3 failed, trying base64 script decoding...")
         val decodedScripts = mutableListOf<String>()
         doc.select("script[src^=data:text/javascript;base64,]").forEach { script ->
             val base64Data = script.attr("src").substringAfter("base64,")
@@ -190,8 +165,8 @@ open class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ----- METHOD 6: Official download API (only as last resort) -----
-        Log.d(TAG, "All other methods failed, trying download API...")
+        // ----- METHOD 6: Official download API (most reliable for problematic videos) -----
+        Log.d(TAG, "Base64 decoding failed, trying download API...")
         val downloadButton = doc.selectFirst("button.download-button")
         if (downloadButton != null) {
             val folderId = downloadButton.attr("data-folderid")
@@ -245,6 +220,33 @@ open class Xtremestream : ExtractorApi() {
                     Log.e(TAG, "Download API exception: ${e.message}")
                 }
             }
+        }
+
+        // ----- METHOD 4: Guess from data parameter (last resort) -----
+        // We do NOT return from this method, because these URLs often fail for pervl5.
+        // We add them as a final fallback and let the player decide.
+        Log.d(TAG, "All other methods failed, trying guessed endpoints as a fallback...")
+        val dataParam = url.substringAfter("data=").substringBefore("&")
+        if (dataParam.isNotBlank()) {
+            listOf(
+                "$mainUrl/api/video/$dataParam/master.m3u8",
+                "$mainUrl/api/manifest/$dataParam",
+                "$mainUrl/manifest/$dataParam.m3u8"
+            ).forEach { manifestUrl ->
+                callback.invoke(
+                    newExtractorLink(
+                        name,
+                        name,
+                        manifestUrl,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = url
+                        this.quality = 0
+                        this.headers = mapOf("Referer" to url, "User-Agent" to USER_AGENT)
+                    }
+                )
+            }
+            Log.d(TAG, "✅ Method 4 (guessed) added links as fallback")
         }
 
         Log.w(TAG, "❌ No video link found")
