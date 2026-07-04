@@ -16,7 +16,7 @@ import java.util.Base64
 
 open class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
-    override var mainUrl = "https://pervl4.xtremestream.xyz" // fallback
+    override var mainUrl = "https://pervl4.xtremestream.xyz"
     override val requiresReferer = true
     private val client = OkHttpClient()
     private val TAG = "PerverzijaExtractor"
@@ -27,7 +27,6 @@ open class Xtremestream : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Set mainUrl dynamically from the input URL
         try {
             val parsed = URL(url)
             mainUrl = "${parsed.protocol}://${parsed.host}"
@@ -67,7 +66,11 @@ open class Xtremestream : ExtractorApi() {
                         ) {
                             this.quality = resolution
                             this.referer = url
-                            this.headers = mapOf("Accept" to "*/*", "Referer" to url, "User-Agent" to USER_AGENT)
+                            this.headers = mapOf<String, String>(
+                                "Accept" to "*/*",
+                                "Referer" to url,
+                                "User-Agent" to USER_AGENT
+                            )
                         }
                     )
                 }
@@ -98,7 +101,10 @@ open class Xtremestream : ExtractorApi() {
                     ) {
                         this.referer = url
                         this.quality = guessQuality(videoUrl)
-                        this.headers = mapOf("Referer" to url, "User-Agent" to USER_AGENT)
+                        this.headers = mapOf<String, String>(
+                            "Referer" to url,
+                            "User-Agent" to USER_AGENT
+                        )
                     }
                 )
             }
@@ -126,7 +132,10 @@ open class Xtremestream : ExtractorApi() {
                         ) {
                             this.referer = url
                             this.quality = guessQuality(videoUrl)
-                            this.headers = mapOf("Referer" to url, "User-Agent" to USER_AGENT)
+                            this.headers = mapOf<String, String>(
+                                "Referer" to url,
+                                "User-Agent" to USER_AGENT
+                            )
                         }
                     )
                     Log.d(TAG, "✅ Method 3 succeeded")
@@ -157,7 +166,10 @@ open class Xtremestream : ExtractorApi() {
                     ) {
                         this.referer = url
                         this.quality = guessQuality(videoUrl)
-                        this.headers = mapOf("Referer" to url, "User-Agent" to USER_AGENT)
+                        this.headers = mapOf<String, String>(
+                            "Referer" to url,
+                            "User-Agent" to USER_AGENT
+                        )
                     }
                 )
                 Log.d(TAG, "✅ Method 5 succeeded")
@@ -165,11 +177,11 @@ open class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ----- METHOD 6: Official download API (first try in iframe) -----
+        // ----- METHOD 6: Download API (first try in iframe) -----
         Log.d(TAG, "Base64 decoding failed, trying download API...")
         var downloadButton = doc.selectFirst("button.download-button")
 
-        // If not found in iframe, try to fetch the referer page (the main Perverzija page)
+        // If not found, fetch the referer page (the main Perverzija page)
         if (downloadButton == null && referer != null) {
             Log.d(TAG, "Download button not found in iframe, fetching referer page: $referer")
             try {
@@ -197,11 +209,9 @@ open class Xtremestream : ExtractorApi() {
             val folderId = downloadButton.attr("data-folderid")
             val token = downloadButton.attr("data-token")
             val xtreme = downloadButton.attr("data-xtremestream")
-            val mdjToken = downloadButton.attr("data-mdjtoken") // optional, may be used
 
             if (folderId.isNotBlank() && token.isNotBlank() && xtreme.isNotBlank()) {
                 try {
-                    // Try POST with token first
                     val encodedToken = URLEncoder.encode(token, "UTF-8")
                     val apiUrl = "https://download.xtremestream.xyz/generateLinkForPlayer" +
                             "?folder=$folderId&xtremestream=$xtreme&token=$encodedToken"
@@ -237,58 +247,18 @@ open class Xtremestream : ExtractorApi() {
                                 ) {
                                     this.referer = referer ?: url
                                     this.quality = guessQuality(directUrl)
-                                    this.headers = mapOf(
-                                        "Referer" to referer ?: url,
+                                    this.headers = mapOf<String, String>(
+                                        "Referer" to (referer ?: url),
                                         "User-Agent" to USER_AGENT,
                                         "Origin" to "https://$xtreme.xtremestream.xyz"
                                     )
                                 }
                             )
-                            Log.d(TAG, "✅ Method 6 (download API POST) succeeded: $directUrl")
+                            Log.d(TAG, "✅ Method 6 (download API) succeeded: $directUrl")
                             return
                         }
-                    }
-
-                    // If POST fails, try GET
-                    Log.d(TAG, "POST gave no link, trying GET...")
-                    val getRequest = Request.Builder()
-                        .url(apiUrl)
-                        .get()
-                        .header("Referer", referer ?: url)
-                        .header("User-Agent", USER_AGENT)
-                        .header("Origin", "https://$xtreme.xtremestream.xyz")
-                        .header("Accept", "application/json")
-                        .build()
-                    val getResponse = client.newCall(getRequest).execute()
-                    val getBody = getResponse.body?.string()
-                    Log.d(TAG, "Download API response (GET): $getBody")
-                    if (getResponse.isSuccessful && getBody != null) {
-                        val jsonResponse = JSONObject(getBody)
-                        val link = jsonResponse.optString("link").takeIf { it.isNotBlank() }
-                            ?: jsonResponse.optString("url").takeIf { it.isNotBlank() }
-                            ?: jsonResponse.optString("video").takeIf { it.isNotBlank() }
-                            ?: jsonResponse.optString("download").takeIf { it.isNotBlank() }
-                        if (link != null) {
-                            val directUrl = if (link.startsWith("http")) link else "https://download.xtremestream.xyz$link"
-                            callback.invoke(
-                                newExtractorLink(
-                                    name,
-                                    name,
-                                    directUrl,
-                                    type = if (directUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
-                                ) {
-                                    this.referer = referer ?: url
-                                    this.quality = guessQuality(directUrl)
-                                    this.headers = mapOf(
-                                        "Referer" to referer ?: url,
-                                        "User-Agent" to USER_AGENT,
-                                        "Origin" to "https://$xtreme.xtremestream.xyz"
-                                    )
-                                }
-                            )
-                            Log.d(TAG, "✅ Method 6 (download API GET) succeeded: $directUrl")
-                            return
-                        }
+                    } else {
+                        Log.w(TAG, "Download API returned ${apiResponse.code}")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Download API exception: ${e.message}")
@@ -314,7 +284,10 @@ open class Xtremestream : ExtractorApi() {
                     ) {
                         this.referer = referer ?: url
                         this.quality = 0
-                        this.headers = mapOf("Referer" to referer ?: url, "User-Agent" to USER_AGENT)
+                        this.headers = mapOf<String, String>(
+                            "Referer" to (referer ?: url),
+                            "User-Agent" to USER_AGENT
+                        )
                     }
                 )
             }
