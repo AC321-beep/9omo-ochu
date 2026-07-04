@@ -12,4 +12,10 @@ class FamilyPornPlugin : Plugin() {
         registerExtractorAPI(VideoStreamingWorld())
         registerExtractorAPI(BestWish())
     }
+
+    companion object {
+        var cfCookies: String = ""
+        var cfCookieHost: String = ""
+        var cfUserAgent: String = ""
+    }
 }
