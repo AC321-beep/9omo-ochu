@@ -27,7 +27,6 @@ open class Xtremestream : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Set mainUrl dynamically from the input URL
         try {
             val parsed = URL(url)
             mainUrl = "${parsed.protocol}://${parsed.host}"
@@ -165,7 +164,7 @@ open class Xtremestream : ExtractorApi() {
             }
         }
 
-        // ----- METHOD 6: Official download API (most reliable for problematic videos) -----
+        // ----- METHOD 6: Official download API (improved) -----
         Log.d(TAG, "Base64 decoding failed, trying download API...")
         val downloadButton = doc.selectFirst("button.download-button")
         if (downloadButton != null) {
@@ -174,11 +173,13 @@ open class Xtremestream : ExtractorApi() {
             val xtreme = downloadButton.attr("data-xtremestream")
             if (folderId.isNotBlank() && token.isNotBlank() && xtreme.isNotBlank()) {
                 try {
+                    // Try POST first (matching the page's fetch)
                     val encodedToken = URLEncoder.encode(token, "UTF-8")
                     val apiUrl = "https://download.xtremestream.xyz/generateLinkForPlayer" +
                             "?folder=$folderId&xtremestream=$xtreme&token=$encodedToken"
                     val json = """{"folder":"$folderId","xtremestream":"$xtreme"}"""
                     val body = json.toRequestBody("application/json".toMediaType())
+
                     val apiRequest = Request.Builder()
                         .url(apiUrl)
                         .post(body)
@@ -187,12 +188,18 @@ open class Xtremestream : ExtractorApi() {
                         .header("Origin", "https://$xtreme.xtremestream.xyz")
                         .header("Accept", "application/json")
                         .build()
+
                     val apiResponse = client.newCall(apiRequest).execute()
                     val responseBody = apiResponse.body?.string()
+                    Log.d(TAG, "Download API response (POST): $responseBody")
                     if (apiResponse.isSuccessful && responseBody != null) {
                         val jsonResponse = JSONObject(responseBody)
-                        val link = jsonResponse.optString("link")
-                        if (link.isNotBlank()) {
+                        // Try different keys: "link", "url", "video", "download"
+                        val link = jsonResponse.optString("link").takeIf { it.isNotBlank() }
+                            ?: jsonResponse.optString("url").takeIf { it.isNotBlank() }
+                            ?: jsonResponse.optString("video").takeIf { it.isNotBlank() }
+                            ?: jsonResponse.optString("download").takeIf { it.isNotBlank() }
+                        if (link != null) {
                             val directUrl = if (link.startsWith("http")) link else "https://download.xtremestream.xyz$link"
                             callback.invoke(
                                 newExtractorLink(
@@ -213,16 +220,60 @@ open class Xtremestream : ExtractorApi() {
                             Log.d(TAG, "✅ Method 6 (download API) succeeded: $directUrl")
                             return
                         }
-                    } else {
-                        Log.w(TAG, "Download API returned ${apiResponse.code}")
+                    }
+
+                    // If POST fails or returns no link, try GET
+                    Log.d(TAG, "POST gave no link, trying GET...")
+                    val getRequest = Request.Builder()
+                        .url(apiUrl) // same URL with query params
+                        .get()
+                        .header("Referer", url)
+                        .header("User-Agent", USER_AGENT)
+                        .header("Origin", "https://$xtreme.xtremestream.xyz")
+                        .header("Accept", "application/json")
+                        .build()
+                    val getResponse = client.newCall(getRequest).execute()
+                    val getBody = getResponse.body?.string()
+                    Log.d(TAG, "Download API response (GET): $getBody")
+                    if (getResponse.isSuccessful && getBody != null) {
+                        val jsonResponse = JSONObject(getBody)
+                        val link = jsonResponse.optString("link").takeIf { it.isNotBlank() }
+                            ?: jsonResponse.optString("url").takeIf { it.isNotBlank() }
+                            ?: jsonResponse.optString("video").takeIf { it.isNotBlank() }
+                            ?: jsonResponse.optString("download").takeIf { it.isNotBlank() }
+                        if (link != null) {
+                            val directUrl = if (link.startsWith("http")) link else "https://download.xtremestream.xyz$link"
+                            callback.invoke(
+                                newExtractorLink(
+                                    name,
+                                    name,
+                                    directUrl,
+                                    type = if (directUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else INFER_TYPE
+                                ) {
+                                    this.referer = url
+                                    this.quality = guessQuality(directUrl)
+                                    this.headers = mapOf(
+                                        "Referer" to url,
+                                        "User-Agent" to USER_AGENT,
+                                        "Origin" to "https://$xtreme.xtremestream.xyz"
+                                    )
+                                }
+                            )
+                            Log.d(TAG, "✅ Method 6 (download API GET) succeeded: $directUrl")
+                            return
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Download API exception: ${e.message}")
                 }
+            } else {
+                Log.w(TAG, "Download button missing required data attributes")
             }
+        } else {
+            Log.w(TAG, "No download button found")
         }
 
-        // ----- METHOD 4: Guessed endpoints (LAST RESORT, no return) -----
+        // ----- METHOD 4: Guessed endpoints (LAST RESORT) -----
         Log.d(TAG, "All other methods failed, trying guessed endpoints as a fallback...")
         val dataParam = url.substringAfter("data=").substringBefore("&")
         if (dataParam.isNotBlank()) {
