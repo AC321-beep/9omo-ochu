@@ -16,7 +16,7 @@ import java.util.Base64
 
 open class Xtremestream : ExtractorApi() {
     override var name = "Xtremestream"
-    override var mainUrl = "https://pervl4.xtremestream.xyz" // fallback, overridden
+    override var mainUrl = "https://pervl4.xtremestream.xyz" // fallback
     override val requiresReferer = true
     private val client = OkHttpClient()
     private val TAG = "PerverzijaExtractor"
@@ -223,8 +223,7 @@ open class Xtremestream : ExtractorApi() {
         }
 
         // ----- METHOD 4: Guess from data parameter (last resort) -----
-        // We do NOT return from this method, because these URLs often fail for pervl5.
-        // We add them as a final fallback and let the player decide.
+        // We do NOT return from this method – the player will try these links as a fallback.
         Log.d(TAG, "All other methods failed, trying guessed endpoints as a fallback...")
         val dataParam = url.substringAfter("data=").substringBefore("&")
         if (dataParam.isNotBlank()) {
