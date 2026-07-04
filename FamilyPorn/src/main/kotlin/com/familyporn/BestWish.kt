@@ -1,11 +1,11 @@
-package com.familypornhd
+package com.familyporn
 
 import android.util.Log
+import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
-import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 
 class BestWish : ExtractorApi() {
     override val name = "BestWish"
@@ -39,7 +39,7 @@ class BestWish : ExtractorApi() {
             referer = url
         )
 
-        val mapper = jacksonObjectMapper().registerKotlinModule()
+        val mapper = jacksonObjectMapper()
         val stream: Stream = mapper.readValue(response)
         val videoUrl = stream.streaming_url
 
