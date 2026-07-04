@@ -11,7 +11,6 @@ import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.fixUrlNull
 import com.lagradost.cloudstream3.mainPageOf
-import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.SearchResponseList
@@ -19,6 +18,8 @@ import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import org.jsoup.nodes.Element
 
 class Perverzija : MainAPI() {
@@ -29,8 +30,7 @@ class Perverzija : MainAPI() {
     override val hasDownloadSupport = true
     override val hasMainPage = true
 
-    private val cfInterceptor = CloudflareKiller()
-
+    // No CloudflareKiller – site doesn't need it
     override val mainPage = mainPageOf(
         "$mainUrl/page/%d/" to "Home",
         "$mainUrl/tag/creampie/page/%d/" to "Creampie",
@@ -51,7 +51,9 @@ class Perverzija : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val document = app.get(request.data.format(page), interceptor = cfInterceptor, timeout = 100L).document
+        val url = request.data.format(page)
+        // Fetch the page with a reasonable timeout
+        val document = app.get(url, timeout = 15000L).document
         val home = document.select("div.row div div.post").mapNotNull {
             it.toSearchResult()
         }
@@ -87,24 +89,20 @@ class Perverzija : MainAPI() {
         } else {
             "$mainUrl/tag/$query/page/$page/"
         }
-        val results = app.get(url, interceptor = cfInterceptor).document
+        val results = app.get(url, timeout = 15000L).document
             .select("div.row div div.post").mapNotNull {
                 it.toSearchResult()
             }.distinctBy { it.url }
-        val hasNext = if (results.isEmpty()) false else true
+        val hasNext = results.isNotEmpty()
         return newSearchResponseList(results, hasNext)
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url, interceptor = cfInterceptor).document
+        val document = app.get(url, timeout = 15000L).document
         val poster = document.select("div#featured-img-id img").attr("src")
         val title = document.select("div.title-info h1.light-title.entry-title").text()
         val pTags = document.select("div.item-content p")
-        val description = StringBuilder().apply {
-            pTags.forEach {
-                append(it.text())
-            }
-        }.toString()
+        val description = pTags.joinToString("") { it.text() }
         val tags = document.select("div.item-tax-list div a").map { it.text() }
         val recommendations =
             document.select("div.related-gallery dl.gallery-item").mapNotNull {
@@ -124,15 +122,13 @@ class Perverzija : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val response = app.get(data, interceptor = cfInterceptor)
-        val document = response.document
-
+        val document = app.get(data, timeout = 15000L).document
         val iframeUrl = document.select("div#player-embed iframe").attr("src")
         if (iframeUrl.isBlank()) {
             return false
         }
 
-        // Stage 1: Try our custom extractor directly on the iframe (most reliable).
+        // Stage 1: Fast custom extractor (xs1 only)
         var linkFound = false
         val wrapperCallback: (ExtractorLink) -> Unit = { link ->
             linkFound = true
@@ -143,12 +139,10 @@ class Perverzija : MainAPI() {
             return true
         }
 
-        // Stage 2: Fallback to CloudStream's built‑in extractor on the main video page URL.
+        // Stage 2: Fallback to built‑in extractors
         if (loadExtractor(data, subtitleCallback, callback)) {
             return true
         }
-
-        // Stage 3: Final fallback to built‑in extractor on the iframe URL.
         return loadExtractor(iframeUrl, subtitleCallback, callback)
     }
 }
