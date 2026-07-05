@@ -3,10 +3,6 @@ package com.familyporn
 import okhttp3.Interceptor
 import okhttp3.Response
 
-/**
- * OkHttp interceptor that injects the saved cf_clearance cookie and User-Agent
- * on every outgoing request, mimicking a real browser that solved the CAPTCHA.
- */
 object CFBypassInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
