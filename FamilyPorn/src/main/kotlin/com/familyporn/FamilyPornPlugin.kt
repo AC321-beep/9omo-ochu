@@ -14,7 +14,7 @@ class FamilyPornPlugin : Plugin() {
         registerExtractorAPI(BestWish())
     }
 
-    override fun getSettingsFragment(): Fragment? {
+    override fun getSettingsFragment(): Fragment {
         return FamilyPornSettingsFragment()
     }
 
