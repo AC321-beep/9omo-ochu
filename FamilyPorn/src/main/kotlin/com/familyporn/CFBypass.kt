@@ -2,24 +2,41 @@ package com.familyporn
 
 import android.annotation.SuppressLint
 import android.app.Dialog
-import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.TextView
+import android.webkit.*
+import android.widget.*
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.lagradost.api.Log
-import androidx.core.graphics.toColorInt
+import okhttp3.Interceptor
+import okhttp3.Response
+
+object CFBypassInterceptor : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val original = chain.request()
+        val builder = original.newBuilder()
+            .removeHeader("X-Requested-With")
+            .header("sec-ch-ua-mobile", "?1")
+            .header("sec-ch-ua-platform", "\"Android\"")
+
+        val savedUa = FamilyPornPlugin.cfUserAgent
+        if (savedUa.isNotEmpty()) builder.header("User-Agent", savedUa)
+
+        val savedCookies = FamilyPornPlugin.cfCookies
+        if (savedCookies.isNotEmpty()) {
+            val existingCookie = original.header("Cookie") ?: ""
+            val base = existingCookie.split(";").map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("cf_clearance=") }
+            val fresh = savedCookies.split(";").map { it.trim() }.filter { it.isNotEmpty() }
+            builder.header("Cookie", (base + fresh).distinct().joinToString("; "))
+        }
+        return chain.proceed(builder.build())
+    }
+}
 
 class CloudflareWebViewDialog(
     private val targetUrl: String,
@@ -27,18 +44,11 @@ class CloudflareWebViewDialog(
 ) : BottomSheetDialogFragment() {
 
     companion object {
-        private const val TAG = "FamilyPorn_CFDialog"
+        private const val TAG = "FamilyPorn_CF"
         private const val POLL_INTERVAL_MS = 2000L
         private const val POLL_TIMEOUT_MS = 120000L
-
-        private val CHALLENGE_TITLES = listOf(
-            "just a moment", "just a moment...",
-            "checking your browser", "attention required",
-            "ddos-guard", "one more step"
-        )
-
-        fun isChallengeTitle(title: String): Boolean =
-            CHALLENGE_TITLES.any { title.lowercase().contains(it) }
+        private val CHALLENGE_TITLES = listOf("just a moment", "checking your browser", "attention required")
+        fun isChallengeTitle(title: String) = CHALLENGE_TITLES.any { title.lowercase().contains(it) }
     }
 
     private var webView: WebView? = null
@@ -49,10 +59,7 @@ class CloudflareWebViewDialog(
     private var pollElapsedMs = 0L
 
     private val targetHost: String by lazy {
-        runCatching {
-            val uri = android.net.Uri.parse(targetUrl)
-            "${uri.scheme}://${uri.host}"
-        }.getOrElse { targetUrl }
+        runCatching { android.net.Uri.parse(targetUrl).let { "${it.scheme}://${it.host}" } }.getOrElse { targetUrl }
     }
 
     private val cookiePollRunnable = object : Runnable {
@@ -63,9 +70,7 @@ class CloudflareWebViewDialog(
             Log.d(TAG, "Poll [$pollElapsedMs ms] cookies: $cookieStr")
             when {
                 cookieStr.contains("cf_clearance") -> saveCookiesAndDismiss(cookieStr)
-                pollElapsedMs >= POLL_TIMEOUT_MS -> {
-                    updateStatus("⏱️ Timed out. Try solving the CAPTCHA then tap Bypass again.")
-                }
+                pollElapsedMs >= POLL_TIMEOUT_MS -> updateStatus("⏱️ Timed out.")
                 else -> scheduleNextPoll()
             }
         }
@@ -73,7 +78,7 @@ class CloudflareWebViewDialog(
 
     private fun scheduleNextPoll() {
         pollElapsedMs += POLL_INTERVAL_MS
-        updateStatus("⏳ Waiting for cookies… (${pollElapsedMs / 1000}s)")
+        updateStatus("⏳ Waiting… (${pollElapsedMs / 1000}s)")
         if (pollElapsedMs >= POLL_INTERVAL_MS) {
             (dialog as? com.google.android.material.bottomsheet.BottomSheetDialog)?.behavior?.apply {
                 skipCollapsed = true
@@ -96,70 +101,53 @@ class CloudflareWebViewDialog(
 
     override fun onStart() {
         super.onStart()
-        dialog?.window?.setLayout(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        )
+        dialog?.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         dialog?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
             ?.layoutParams?.height = ViewGroup.LayoutParams.MATCH_PARENT
     }
 
-    override fun onCreateView(
-        inflater: LayoutInflater,
-        container: ViewGroup?,
-        savedInstanceState: Bundle?
-    ): View {
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val screenH = requireContext().resources.displayMetrics.heightPixels
         val webViewHeight = (screenH * 0.70).toInt()
 
         val root = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 24, 32, 24)
-            setBackgroundColor("#1A1A2E".toColorInt())
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
+            setBackgroundColor(0xFF1A1A2E.toInt())
+            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
 
         root.addView(TextView(requireContext()).apply {
             text = "🛡️ FamilyPorn – Cloudflare Bypass"
             textSize = 18f
-            setTextColor(Color.WHITE)
+            setTextColor(0xFFFFFFFF.toInt())
             setPadding(0, 0, 0, 8)
         })
 
         statusText = TextView(requireContext()).apply {
             text = "Loading challenge page…"
             textSize = 13f
-            setTextColor("#A0A0B0".toColorInt())
+            setTextColor(0xFFA0A0B0.toInt())
             setPadding(0, 0, 0, 4)
         }
         root.addView(statusText)
 
         root.addView(TextView(requireContext()).apply {
-            text = "Solve any CAPTCHA shown below. The dialog will close automatically once done."
+            text = "Solve any CAPTCHA. The dialog will close automatically."
             textSize = 11f
-            setTextColor(Color.parseColor("#707080"))
+            setTextColor(0xFF707080.toInt())
             setPadding(0, 0, 0, 12)
         })
 
-        progressBar = ProgressBar(
-            requireContext(), null, android.R.attr.progressBarStyleHorizontal
-        ).apply {
+        progressBar = ProgressBar(requireContext(), null, android.R.attr.progressBarStyleHorizontal).apply {
             isIndeterminate = true
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).also { it.bottomMargin = 12 }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .also { it.bottomMargin = 12 }
         }
         root.addView(progressBar)
 
         val wvContainer = FrameLayout(requireContext()).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                webViewHeight
-            )
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, webViewHeight)
         }
         webView = buildWebView()
         wvContainer.addView(webView)
@@ -186,26 +174,23 @@ class CloudflareWebViewDialog(
             javaScriptEnabled = true
             domStorageEnabled = true
             @Suppress("DEPRECATION")
-            mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             allowContentAccess = true
             allowFileAccess = true
             loadsImagesAutomatically = true
         }
-
         wv.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                super.onProgressChanged(view, newProgress)
                 if (!cookiesSaved) updateStatus("Loading… $newProgress%")
             }
         }
-
         wv.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 if (cookiesSaved) return
                 val title = view?.title ?: ""
                 if (isChallengeTitle(title)) {
-                    updateStatus("🔄 Challenge active – solve the CAPTCHA above")
+                    updateStatus("🔄 Challenge active – solve CAPTCHA")
                 } else {
                     updateStatus("✏️ Page loaded – checking cookies…")
                     CookieManager.getInstance().flush()
@@ -218,8 +203,8 @@ class CloudflareWebViewDialog(
                     } ?: ""
                     val bestCookies = when {
                         cookiesFromTarget.contains("cf_clearance") -> cookiesFromTarget
-                        cookiesFromUrl.contains("cf_clearance")    -> cookiesFromUrl
-                        else                                        -> null
+                        cookiesFromUrl.contains("cf_clearance") -> cookiesFromUrl
+                        else -> null
                     }
                     if (bestCookies != null) {
                         handler.removeCallbacks(cookiePollRunnable)
@@ -235,19 +220,12 @@ class CloudflareWebViewDialog(
         if (cookiesSaved) return
         cookiesSaved = true
         handler.removeCallbacks(cookiePollRunnable)
-
         FamilyPornPlugin.cfCookies = cookieStr
         FamilyPornPlugin.cfCookieHost = targetHost
-        webView?.settings?.userAgentString?.let { ua ->
-            FamilyPornPlugin.cfUserAgent = ua
-        }
-
-        updateStatus("✅ Done! Cookies saved.")
+        webView?.settings?.userAgentString?.let { FamilyPornPlugin.cfUserAgent = it }
+        updateStatus("✅ Done!")
         webView?.postDelayed({
-            if (isAdded) {
-                onFinished?.invoke(true)
-                dismissAllowingStateLoss()
-            }
+            if (isAdded) { onFinished?.invoke(true); dismissAllowingStateLoss() }
         }, 1500)
     }
 
@@ -262,22 +240,13 @@ class CloudflareWebViewDialog(
     private fun updateStatus(msg: String) {
         activity?.runOnUiThread {
             statusText?.text = msg
-            if (msg.startsWith("✅")) {
-                progressBar?.visibility = View.GONE
-                statusText?.setTextColor(Color.parseColor("#4CAF50"))
-            } else {
-                progressBar?.visibility = View.VISIBLE
-                statusText?.setTextColor(Color.parseColor("#A0A0B0"))
-            }
+            progressBar?.visibility = if (msg.startsWith("✅")) View.GONE else View.VISIBLE
         }
     }
 
     override fun onDestroyView() {
         handler.removeCallbacks(cookiePollRunnable)
-        webView?.apply {
-            stopLoading()
-            destroy()
-        }
+        webView?.destroy()
         webView = null
         super.onDestroyView()
     }
