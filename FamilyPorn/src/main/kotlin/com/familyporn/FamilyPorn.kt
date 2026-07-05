@@ -34,21 +34,39 @@ class FamilyPorn : MainAPI() {
             if (FamilyPornPlugin.cfCookies.contains("cf_clearance")) return
             Log.d(TAG, "Showing CF WebView dialog for $url")
             val activity = com.lagradost.cloudstream3.CommonActivity.activity ?: return
-
             activity.runOnUiThread {
                 val dialog = CloudflareWebViewDialog(
                     targetUrl = url,
                     onFinished = { success ->
                         if (success) Log.d(TAG, "CF solved, cookies saved")
-                        else Log.w(TAG, "CF dialog dismissed without solving")
+                        else Log.w(TAG, "CF dialog dismissed")
                     }
                 )
                 if (activity is FragmentActivity) {
                     dialog.show(activity.supportFragmentManager, "familyporn_cf_bypass")
                 } else {
-                    Log.e(TAG, "Activity is not FragmentActivity, cannot show dialog")
+                    Log.e(TAG, "Activity is not FragmentActivity")
                 }
             }
+        }
+
+        private fun buildHeaders(headers: Map<String, String>? = null): Map<String, String> {
+            val base = headers?.toMutableMap() ?: mutableMapOf()
+            if (FamilyPornPlugin.cfCookies.isNotEmpty()) {
+                val existingCookie = base["Cookie"] ?: ""
+                val fresh = FamilyPornPlugin.cfCookies
+                base["Cookie"] = if (existingCookie.isNotEmpty()) {
+                    val parts = existingCookie.split(";").map { it.trim() }
+                        .filter { it.isNotEmpty() && !it.startsWith("cf_clearance=") }
+                    (parts + fresh).distinct().joinToString("; ")
+                } else {
+                    fresh
+                }
+            }
+            if (!base.containsKey("User-Agent")) {
+                base["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+            }
+            return base
         }
 
         suspend fun getDocument(
@@ -57,22 +75,16 @@ class FamilyPorn : MainAPI() {
             cookies: Map<String, String>? = null,
             referer: String? = null
         ): Document {
-            var response = app.get(
-                url,
-                headers = headers ?: emptyMap(),
-                cookies = cookies ?: emptyMap(),
-                referer = referer,
-                interceptor = CFBypassInterceptor
-            )
+            val finalHeaders = buildHeaders(headers)
+            var response = app.get(url, headers = finalHeaders, cookies = cookies ?: emptyMap(), referer = referer)
             if (isCloudflareBlocked(response)) {
                 showCFDialogIfNeeded(url)
-                response = app.get(
-                    url,
-                    headers = headers ?: emptyMap(),
-                    cookies = cookies ?: emptyMap(),
-                    referer = referer,
-                    interceptor = CFBypassInterceptor
-                )
+                val retryHeaders = buildHeaders(headers)
+                response = app.get(url, headers = retryHeaders, cookies = cookies ?: emptyMap(), referer = referer)
+                if (isCloudflareBlocked(response)) {
+                    Log.e(TAG, "Still blocked after retry for $url")
+                    return Document("")
+                }
             }
             return response.document
         }
@@ -83,22 +95,16 @@ class FamilyPorn : MainAPI() {
             cookies: Map<String, String>? = null,
             referer: String? = null
         ): String {
-            var response = app.get(
-                url,
-                headers = headers ?: emptyMap(),
-                cookies = cookies ?: emptyMap(),
-                referer = referer,
-                interceptor = CFBypassInterceptor
-            )
+            val finalHeaders = buildHeaders(headers)
+            var response = app.get(url, headers = finalHeaders, cookies = cookies ?: emptyMap(), referer = referer)
             if (isCloudflareBlocked(response)) {
                 showCFDialogIfNeeded(url)
-                response = app.get(
-                    url,
-                    headers = headers ?: emptyMap(),
-                    cookies = cookies ?: emptyMap(),
-                    referer = referer,
-                    interceptor = CFBypassInterceptor
-                )
+                val retryHeaders = buildHeaders(headers)
+                response = app.get(url, headers = retryHeaders, cookies = cookies ?: emptyMap(), referer = referer)
+                if (isCloudflareBlocked(response)) {
+                    Log.e(TAG, "Still blocked after retry for $url")
+                    return ""
+                }
             }
             return response.text
         }
@@ -110,32 +116,21 @@ class FamilyPorn : MainAPI() {
             cookies: Map<String, String>? = null,
             referer: String? = null
         ): String {
-            var response = app.post(
-                url,
-                data = data ?: emptyMap(),
-                headers = headers ?: emptyMap(),
-                cookies = cookies ?: emptyMap(),
-                referer = referer,
-                interceptor = CFBypassInterceptor
-            )
+            val finalHeaders = buildHeaders(headers)
+            var response = app.post(url, data = data ?: emptyMap(), headers = finalHeaders, cookies = cookies ?: emptyMap(), referer = referer)
             if (isCloudflareBlocked(response)) {
                 showCFDialogIfNeeded(url)
-                response = app.post(
-                    url,
-                    data = data ?: emptyMap(),
-                    headers = headers ?: emptyMap(),
-                    cookies = cookies ?: emptyMap(),
-                    referer = referer,
-                    interceptor = CFBypassInterceptor
-                )
+                val retryHeaders = buildHeaders(headers)
+                response = app.post(url, data = data ?: emptyMap(), headers = retryHeaders, cookies = cookies ?: emptyMap(), referer = referer)
+                if (isCloudflareBlocked(response)) {
+                    Log.e(TAG, "Still blocked after retry for $url")
+                    return ""
+                }
             }
             return response.text
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Main page definitions
-    // ------------------------------------------------------------------------
     override val mainPage = mainPageOf(
         "${mainUrl}" to "All Porn Videos",
         "${mainUrl}/tag/redhead" to "Red Head",
@@ -166,9 +161,6 @@ class FamilyPorn : MainAPI() {
         )
     }
 
-    // ------------------------------------------------------------------------
-    // Search
-    // ------------------------------------------------------------------------
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = if (page == 1) "${mainUrl}/?s=${query}" else "${mainUrl}/page/$page/?s=${query}"
         val document = getDocument(url)
@@ -176,9 +168,6 @@ class FamilyPorn : MainAPI() {
         return newSearchResponseList(results, hasNext = true)
     }
 
-    // ------------------------------------------------------------------------
-    // Load video page
-    // ------------------------------------------------------------------------
     override suspend fun load(url: String): LoadResponse {
         val document = getDocument(url)
         val title = document.selectFirst("meta[property=og:title]")?.attr("content").orEmpty()
@@ -196,9 +185,6 @@ class FamilyPorn : MainAPI() {
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Load video links (extract iframe)
-    // ------------------------------------------------------------------------
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -213,7 +199,6 @@ class FamilyPorn : MainAPI() {
             return false
         }
         Log.d("FamilyPorn", "iframe src: $iframeSrc")
-
         loadExtractor(
             url = iframeSrc,
             referer = data,
@@ -223,9 +208,6 @@ class FamilyPorn : MainAPI() {
         return true
     }
 
-    // ------------------------------------------------------------------------
-    // Helper functions for parsing search results
-    // ------------------------------------------------------------------------
     private fun Element.toSearchResult(): SearchResponse? {
         val anchor = this.selectFirst("article a") ?: return null
         val title = anchor.attr("title")?.trim() ?: return null
