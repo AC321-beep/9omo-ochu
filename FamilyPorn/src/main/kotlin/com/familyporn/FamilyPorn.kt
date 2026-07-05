@@ -21,7 +21,6 @@ class FamilyPorn : MainAPI() {
     companion object Network {
         private const val TAG = "FamilyPorn"
 
-        // Cloudflare detection keywords
         private val CF_BLOCKER_PHRASES = listOf(
             "just a moment", "checking your browser",
             "ddos-guard", "attention required",
@@ -34,7 +33,6 @@ class FamilyPorn : MainAPI() {
             return CF_BLOCKER_PHRASES.any { text.contains(it) }
         }
 
-        // Show WebView dialog to solve Cloudflare challenge
         private suspend fun showCFDialogIfNeeded(url: String) {
             if (FamilyPornPlugin.cfCookies.contains("cf_clearance")) return
             Log.d(TAG, "Showing CF WebView dialog for $url")
@@ -56,7 +54,6 @@ class FamilyPorn : MainAPI() {
             }
         }
 
-        // ----- Public network functions with Cloudflare handling -----
         suspend fun getDocument(
             url: String,
             headers: Map<String, String>? = null,
@@ -183,9 +180,9 @@ class FamilyPorn : MainAPI() {
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? {
-        // Fixed: store the result and then access its 'search' property
-        val response = search(query, 1)
-        return response.search
+        // Explicitly type the variable to help the compiler resolve the 'search' property
+        val result: SearchResponseList = search(query, 1)
+        return result.search
     }
 
     // ------------------------------------------------------------------------
