@@ -21,9 +21,6 @@ class Fireplayer : ExtractorApi() {
         val videoid = url.substringAfter("/video/").substringBefore("?")
         Log.d("Fireplayer", "Video ID: $videoid")
 
-        FamilyPorn.getDocument(url, referer = referer)  // get cookies
-        val cookies = FamilyPorn.getCookies(url)
-
         val posturl = "$mainUrl/player/index.php?data=$videoid&do=getVideo"
         val postdata = mapOf("hash" to videoid, "r" to (referer ?: ""))
         val headers = mapOf(
@@ -34,15 +31,14 @@ class Fireplayer : ExtractorApi() {
             "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
         )
 
+        // The interceptor will inject the saved cf_clearance cookie automatically.
         val response = FamilyPorn.postText(
             url = posturl,
             data = postdata,
             headers = headers,
-            cookies = cookies,
             referer = url
         )
 
-        // Use local mapper
         val mapper = jacksonObjectMapper()
         val json = mapper.readValue(response, FireResponse::class.java)
         val videolink = json.securedlink ?: json.videosource
