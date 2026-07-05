@@ -16,7 +16,6 @@ import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.lagradost.cloudstream3.plugins.Plugin
-import com.familyporn.BuildConfig
 
 class FamilyPornSettingsFragment(private val plugin: Plugin) : BottomSheetDialogFragment() {
 
@@ -26,15 +25,15 @@ class FamilyPornSettingsFragment(private val plugin: Plugin) : BottomSheetDialog
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View? {
+        // Hardcode the package name – works without BuildConfig
+        val packageName = "com.familyporn"
         val id = plugin.resources!!.getIdentifier(
             "bottom_sheet_layout",
             "layout",
-            BuildConfig.LIBRARY_PACKAGE_NAME
+            packageName
         )
-        val layout = plugin.resources!!.getLayout(id)
-        val view = inflater.inflate(layout, container, false)
+        val view = inflater.inflate(id, container, false)
 
-        // Save & Restart button
         val saveBtn = view.findView<Button>("save")
         saveBtn.setOnClickListener {
             context?.let { ctx ->
@@ -53,7 +52,6 @@ class FamilyPornSettingsFragment(private val plugin: Plugin) : BottomSheetDialog
             }
         }
 
-        // Cloudflare bypass button
         val bypassBtn = view.findView<Button>("cf_bypass_btn")
         bypassBtn.setOnClickListener {
             val dialog = CloudflareWebViewDialog(
@@ -67,20 +65,18 @@ class FamilyPornSettingsFragment(private val plugin: Plugin) : BottomSheetDialog
             )
             dialog.show(parentFragmentManager, "familyporn_cf_bypass")
         }
-        // Update button label to show current cookie status
         if (FamilyPornPlugin.cfCookies.isNotBlank()) {
             bypassBtn.text = "✅ CF Cookies Saved – Refresh"
         } else {
             bypassBtn.text = "🛡️ Bypass Cloudflare"
         }
 
-        // Clear CF Cookies button
         val clearBtn = view.findView<Button>("cf_clear_btn")
         clearBtn.setOnClickListener {
             context?.let { ctx ->
                 AlertDialog.Builder(ctx)
                     .setTitle("Clear CF Cookies?")
-                    .setMessage("This will remove the saved Cloudflare cookies and User-Agent. You will need to bypass Cloudflare again before streaming.")
+                    .setMessage("This will remove the saved Cloudflare cookies and User-Agent.")
                     .setPositiveButton("Clear") { _, _ ->
                         val host = FamilyPornPlugin.cfCookieHost
                         if (host.isNotBlank()) {
@@ -105,7 +101,7 @@ class FamilyPornSettingsFragment(private val plugin: Plugin) : BottomSheetDialog
     }
 
     private fun <T : View> View.findView(name: String): T {
-        val id = plugin.resources!!.getIdentifier(name, "id", BuildConfig.LIBRARY_PACKAGE_NAME)
+        val id = plugin.resources!!.getIdentifier(name, "id", "com.familyporn")
         return findViewById(id)
     }
 
