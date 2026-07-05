@@ -37,13 +37,12 @@ class FamilyPorn : MainAPI() {
             return CF_BLOCKER_PHRASES.any { text.contains(it) }
         }
 
-        // ---- CF dialog helper (exactly like AniDb) ----
         private suspend fun showCFDialogIfNeeded(url: String): Boolean =
             withContext(Dispatchers.Main) {
                 suspendCancellableCoroutine { continuation ->
                     val activity = com.lagradost.cloudstream3.CommonActivity.activity as? AppCompatActivity
                     if (activity == null || activity.isFinishing || activity.isDestroyed) {
-                        Log.e(TAG, "No activity available to show CF dialog")
+                        Log.e(TAG, "No activity available")
                         continuation.resume(false)
                         return@suspendCancellableCoroutine
                     }
@@ -65,7 +64,6 @@ class FamilyPorn : MainAPI() {
                 }
             }
 
-        // ---- Network functions using interceptor ----
         suspend fun appGet(
             url: String,
             headers: Map<String, String> = emptyMap()
@@ -95,7 +93,6 @@ class FamilyPorn : MainAPI() {
             return response
         }
 
-        // Public wrappers
         suspend fun getDocument(
             url: String,
             headers: Map<String, String>? = null,
@@ -193,7 +190,6 @@ class FamilyPorn : MainAPI() {
 
         return newMovieLoadResponse(title, url, type = TvType.NSFW, data = url) {
             this.posterUrl = posterUrl
-            // Poster headers are handled by the interceptor, but we can add fallback headers
             this.posterHeaders = mapOf("Referer" to mainUrl)
             this.plot = description
             this.tags = tags
