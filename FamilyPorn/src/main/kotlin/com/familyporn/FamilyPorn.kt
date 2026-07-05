@@ -20,7 +20,7 @@ class FamilyPorn : MainAPI() {
     companion object Network {
         private const val TAG = "FamilyPorn"
 
-        // Expanded Cloudflare detection phrases
+        // Cloudflare detection phrases
         private val CF_BLOCKER_PHRASES = listOf(
             "just a moment", "checking your browser", "ddos-guard",
             "attention required", "verify you are human", "cloudflare",
@@ -31,7 +31,6 @@ class FamilyPorn : MainAPI() {
         )
 
         private fun isCloudflareBlocked(response: com.lagradost.nicehttp.NiceResponse): Boolean {
-            // 1. Status code check
             if (response.code == 403 || response.code == 503) {
                 Log.d(TAG, "Blocked by status code ${response.code}")
                 return true
@@ -40,68 +39,49 @@ class FamilyPorn : MainAPI() {
             val text = response.text
             val lower = text.lowercase()
 
-            // 2. Phrase match
-            val phraseMatch = CF_BLOCKER_PHRASES.any { lower.contains(it) }
-            if (phraseMatch) {
-                Log.d(TAG, "Blocked by phrase match: ${lower.take(200)}")
+            if (CF_BLOCKER_PHRASES.any { lower.contains(it) }) {
+                Log.d(TAG, "Blocked by phrase match")
                 return true
             }
 
-            // 3. Check HTML title
             val titleMatch = Regex("<title>(.*?)</title>", RegexOption.IGNORE_CASE).find(text)
             if (titleMatch != null) {
                 val title = titleMatch.groupValues[1].lowercase()
-                if (title.contains("just a moment") || title.contains("checking your browser") || title.contains("security check")) {
-                    Log.d(TAG, "Blocked by <title>: $title")
+                if (title.contains("just a moment") || title.contains("checking your browser")) {
+                    Log.d(TAG, "Blocked by title: $title")
                     return true
                 }
             }
 
-            // 4. Look for Cloudflare challenge elements
-            if (text.contains("cf-challenge") || text.contains("_cf_chl_opt") || text.contains("cf-browser-verification")) {
+            if (text.contains("cf-challenge") || text.contains("_cf_chl_opt")) {
                 Log.d(TAG, "Blocked by cf-challenge elements")
                 return true
             }
 
-            // 5. Heuristic: small HTML with a script containing "challenge" (likely a challenge page)
             if (text.length < 50000 && text.contains("<script") && lower.contains("challenge")) {
                 Log.d(TAG, "Blocked: small HTML with challenge script")
                 return true
             }
 
-            // 6. Debug logging – show first 500 chars if it doesn't look like a normal site
-            if (text.isNotEmpty() && !lower.contains("familypornhd.com") && !lower.contains("video")) {
-                Log.d(TAG, "Unrecognized response (first 500 chars): ${text.take(500)}")
-            }
-
             return false
         }
 
-        // Show WebView dialog and wait for the user to solve the challenge
         private suspend fun showCFDialogIfNeeded(url: String): Boolean {
             Log.d(TAG, "Attempting to show CF dialog for $url")
-            val activity = com.lagradost.cloudstream3.CommonActivity.activity ?: run {
-                Log.e(TAG, "No activity available")
-                return false
-            }
-
+            val activity = com.lagradost.cloudstream3.CommonActivity.activity ?: return false
             return suspendCoroutine { continuation ->
                 activity.runOnUiThread {
                     val dialog = CloudflareWebViewDialog(
                         targetUrl = url,
                         onFinished = { success ->
-                            if (success) {
-                                Log.d(TAG, "CF dialog completed successfully")
-                            } else {
-                                Log.w(TAG, "CF dialog was dismissed without solving")
-                            }
+                            if (success) Log.d(TAG, "CF solved") else Log.w(TAG, "CF dismissed")
                             continuation.resume(success)
                         }
                     )
                     if (activity is FragmentActivity) {
                         dialog.show(activity.supportFragmentManager, "familyporn_cf_bypass")
                     } else {
-                        Log.e(TAG, "Activity is not FragmentActivity")
+                        Log.e(TAG, "Activity not FragmentActivity")
                         continuation.resume(false)
                     }
                 }
@@ -115,7 +95,6 @@ class FamilyPorn : MainAPI() {
             referer: String? = null
         ): Document {
             Log.d(TAG, "getDocument: $url")
-
             var response = app.get(
                 url,
                 headers = headers ?: emptyMap(),
@@ -123,13 +102,9 @@ class FamilyPorn : MainAPI() {
                 referer = referer,
                 interceptor = CFBypassInterceptor
             )
-
-            // If blocked, attempt to solve
             if (isCloudflareBlocked(response)) {
-                Log.d(TAG, "Request blocked, starting CF solving")
                 val solved = showCFDialogIfNeeded(url)
                 if (solved) {
-                    Log.d(TAG, "CF solved, retrying request")
                     response = app.get(
                         url,
                         headers = headers ?: emptyMap(),
@@ -137,18 +112,8 @@ class FamilyPorn : MainAPI() {
                         referer = referer,
                         interceptor = CFBypassInterceptor
                     )
-                    if (isCloudflareBlocked(response)) {
-                        Log.e(TAG, "Still blocked after solving CF")
-                    } else {
-                        Log.d(TAG, "Request succeeded after CF solve")
-                    }
-                } else {
-                    Log.w(TAG, "CF solving failed or cancelled")
                 }
-            } else {
-                Log.d(TAG, "Request not blocked")
             }
-
             return response.document
         }
 
@@ -212,7 +177,7 @@ class FamilyPorn : MainAPI() {
         }
     }
 
-    // ---------- Main Page ----------
+    // ---------- Main page ----------
     override val mainPage = mainPageOf(
         "${mainUrl}" to "All Porn Videos",
         "${mainUrl}/tag/redhead" to "Red Head",
@@ -234,16 +199,11 @@ class FamilyPorn : MainAPI() {
         val document = getDocument(url)
         val home = document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(
-            list = HomePageList(
-                name = request.name,
-                list = home,
-                isHorizontalImages = true
-            ),
+            list = HomePageList(name = request.name, list = home, isHorizontalImages = true),
             hasNext = true
         )
     }
 
-    // ---------- Search ----------
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = if (page == 1) "${mainUrl}/?s=${query}" else "${mainUrl}/page/$page/?s=${query}"
         val document = getDocument(url)
@@ -251,27 +211,57 @@ class FamilyPorn : MainAPI() {
         return newSearchResponseList(results, hasNext = true)
     }
 
-    // quickSearch is not used because hasQuickSearch = false
-
-    // ---------- Load Video ----------
+    // ---------- Load video page – improved poster and title extraction ----------
     override suspend fun load(url: String): LoadResponse {
         val document = getDocument(url)
-        val title = document.selectFirst("meta[property=og:title]")?.attr("content").orEmpty()
-        val description = document.selectFirst("meta[property=og:description]")?.attr("content").orEmpty()
+
+        // Log first 500 chars to see the structure
+        Log.d("FamilyPorn", "Video page HTML: ${document.html().take(500)}")
+
+        // Title – try multiple sources
+        val title = document.selectFirst("meta[property=og:title]")?.attr("content")
+            ?: document.selectFirst("h1")?.text()
+            ?: document.selectFirst(".entry-title")?.text()
+            ?: document.selectFirst("title")?.text()
+            ?: "Unknown Title"
+
+        // Description
+        val description = document.selectFirst("meta[property=og:description]")?.attr("content")
+            ?: document.selectFirst("meta[name=description]")?.attr("content")
+            ?: ""
+
+        // Tags
         val tags = document.select("p.entry-tags a").map { it.text().lowercase() }.take(5)
-        val posterUrl = document.selectFirst("meta[property=og:image]")?.attr("content").orEmpty()
+
+        // Poster – try multiple sources
+        var posterUrl = document.selectFirst("meta[property=og:image]")?.attr("content")
+        if (posterUrl.isNullOrBlank()) {
+            posterUrl = document.selectFirst("meta[name=twitter:image]")?.attr("content")
+        }
+        if (posterUrl.isNullOrBlank()) {
+            posterUrl = document.selectFirst("div.entry-content img")?.attr("src")
+        }
+        if (posterUrl.isNullOrBlank()) {
+            posterUrl = document.selectFirst("img.attachment-post-thumbnail")?.attr("src")
+        }
+        // Fallback: look for any large image
+        if (posterUrl.isNullOrBlank()) {
+            posterUrl = document.select("img").firstOrNull { it.attr("src").contains("familypornhd.com") }?.attr("src")
+        }
+
+        // Recommendations
         val recommendations = document.select("aside.g1-related-entries div.g1-collection li")
             .mapNotNull { it.toRecommendationResult() }
 
         return newMovieLoadResponse(title, url, type = TvType.NSFW, data = url) {
-            this.posterUrl = posterUrl
+            this.posterUrl = fixUrlNull(posterUrl)
             this.plot = description
             this.tags = tags
             this.recommendations = recommendations
         }
     }
 
-    // ---------- Load Links ----------
+    // ---------- Load links – improved iframe extraction ----------
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -280,12 +270,52 @@ class FamilyPorn : MainAPI() {
     ): Boolean {
         Log.d("FamilyPorn", "loadLinks: $data")
         val document = getDocument(data)
-        val iframeSrc = document.selectFirst("div.embed-container iframe")?.attr("src").orEmpty()
-        if (iframeSrc.isBlank()) {
-            Log.e("FamilyPorn", "No iframe found")
+
+        // Log HTML to see what we're dealing with
+        Log.d("FamilyPorn", "Video page HTML for iframe: ${document.html().take(500)}")
+
+        // Try multiple selectors for iframe
+        var iframeSrc = document.selectFirst("div.embed-container iframe")?.attr("src")
+        if (iframeSrc.isNullOrBlank()) {
+            iframeSrc = document.selectFirst("div.video-wrapper iframe")?.attr("src")
+        }
+        if (iframeSrc.isNullOrBlank()) {
+            iframeSrc = document.selectFirst("iframe[src*='watchstream']")?.attr("src")
+        }
+        if (iframeSrc.isNullOrBlank()) {
+            iframeSrc = document.selectFirst("iframe[src*='videostreamingworld']")?.attr("src")
+        }
+        if (iframeSrc.isNullOrBlank()) {
+            iframeSrc = document.selectFirst("iframe[src*='bestwish']")?.attr("src")
+        }
+
+        // If still no iframe, try to find the embed URL in the page (JavaScript variable or link)
+        if (iframeSrc.isNullOrBlank()) {
+            val html = document.html()
+            // Look for common embed patterns
+            val patterns = listOf(
+                Regex("""iframe.*?src=["'](https?://[^"']+\.com/[^"']+)["']""", RegexOption.IGNORE_CASE),
+                Regex("""file:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE),
+                Regex("""sources:\s*\[[^\]]*file:\s*["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE),
+                Regex("""data-stream-url=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            )
+            for (pattern in patterns) {
+                val match = pattern.find(html)
+                if (match != null) {
+                    iframeSrc = match.groupValues[1]
+                    break
+                }
+            }
+        }
+
+        if (iframeSrc.isNullOrBlank()) {
+            Log.e("FamilyPorn", "No iframe or embed URL found")
             return false
         }
+
         Log.d("FamilyPorn", "iframe src: $iframeSrc")
+
+        // Load the extractor with the iframe URL
         loadExtractor(
             url = iframeSrc,
             referer = data,
@@ -306,5 +336,13 @@ class FamilyPorn : MainAPI() {
         }
     }
 
-    private fun Element.toRecommendationResult(): SearchResponse? = toSearchResult()
+    private fun Element.toRecommendationResult(): SearchResponse? {
+        val anchor = this.selectFirst("article a") ?: return null
+        val title = anchor.attr("title")?.trim() ?: return null
+        val href = fixUrl(anchor.attr("href"))
+        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("src"))
+        return newMovieSearchResponse(title, href, TvType.NSFW) {
+            this.posterUrl = posterUrl
+        }
+    }
 }
