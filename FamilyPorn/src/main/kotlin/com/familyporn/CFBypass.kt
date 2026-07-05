@@ -10,11 +10,14 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
 import android.widget.*
+import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.lagradost.api.Log
 import okhttp3.Interceptor
 import okhttp3.Response
 
+// ---- OkHttp Interceptor ----
 object CFBypassInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
@@ -38,6 +41,7 @@ object CFBypassInterceptor : Interceptor {
     }
 }
 
+// ---- WebView dialog (starts expanded) ----
 class CloudflareWebViewDialog(
     private val targetUrl: String,
     private val onFinished: ((Boolean) -> Unit)? = null
@@ -79,22 +83,16 @@ class CloudflareWebViewDialog(
     private fun scheduleNextPoll() {
         pollElapsedMs += POLL_INTERVAL_MS
         updateStatus("⏳ Waiting… (${pollElapsedMs / 1000}s)")
-        if (pollElapsedMs >= POLL_INTERVAL_MS) {
-            (dialog as? com.google.android.material.bottomsheet.BottomSheetDialog)?.behavior?.apply {
-                skipCollapsed = true
-                peekHeight = ViewGroup.LayoutParams.MATCH_PARENT
-                state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
-            }
-        }
         handler.postDelayed(cookiePollRunnable, POLL_INTERVAL_MS)
     }
 
+    // ✅ Start the dialog fully expanded
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         val dialog = super.onCreateDialog(savedInstanceState)
-        (dialog as? com.google.android.material.bottomsheet.BottomSheetDialog)?.behavior?.apply {
-            state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_COLLAPSED
-            skipCollapsed = false
-            peekHeight = 0
+        (dialog as? BottomSheetDialog)?.behavior?.apply {
+            state = BottomSheetBehavior.STATE_EXPANDED
+            skipCollapsed = true
+            peekHeight = ViewGroup.LayoutParams.MATCH_PARENT
         }
         return dialog
     }
@@ -225,7 +223,10 @@ class CloudflareWebViewDialog(
         webView?.settings?.userAgentString?.let { FamilyPornPlugin.cfUserAgent = it }
         updateStatus("✅ Done!")
         webView?.postDelayed({
-            if (isAdded) { onFinished?.invoke(true); dismissAllowingStateLoss() }
+            if (isAdded) {
+                onFinished?.invoke(true)
+                dismissAllowingStateLoss()
+            }
         }, 1500)
     }
 
