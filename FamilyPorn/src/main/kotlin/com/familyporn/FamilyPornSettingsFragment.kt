@@ -24,7 +24,6 @@ class FamilyPornSettingsFragment : DialogFragment() {
             setPadding(32, 24, 32, 24)
         }
 
-        // Title
         root.addView(TextView(requireContext()).apply {
             text = "FamilyPorn Settings"
             textSize = 20f
@@ -32,7 +31,6 @@ class FamilyPornSettingsFragment : DialogFragment() {
             setPadding(0, 0, 0, 16)
         })
 
-        // Explanation (as in the screenshot)
         root.addView(TextView(requireContext()).apply {
             text = "Cloudflare Protection:\nIf you see a \"Just a moment\" screen, tap below to open a WebView and solve the challenge. Cookies will be saved automatically."
             textSize = 13f
@@ -40,7 +38,6 @@ class FamilyPornSettingsFragment : DialogFragment() {
             setPadding(0, 0, 0, 16)
         })
 
-        // Bypass button – updates dynamically
         val bypassBtn = Button(requireContext()).apply {
             text = if (FamilyPornPlugin.cfCookies.isNotBlank()) "✅ CF Cookies Saved – Refresh" else "🛡️ Bypass Cloudflare"
             setOnClickListener {
@@ -60,7 +57,6 @@ class FamilyPornSettingsFragment : DialogFragment() {
         }
         root.addView(bypassBtn)
 
-        // Clear CF Cookies button
         val clearBtn = Button(requireContext()).apply {
             text = "🗑️ Clear CF Cookies"
             setOnClickListener {
@@ -91,7 +87,6 @@ class FamilyPornSettingsFragment : DialogFragment() {
         }
         root.addView(clearBtn)
 
-        // Save & Restart button
         val restartBtn = Button(requireContext()).apply {
             text = "💾 Save & Restart"
             setOnClickListener {
