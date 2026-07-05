@@ -15,9 +15,6 @@ class FamilyPorn : MainAPI() {
     override val hasQuickSearch = false
     override val supportedTypes = setOf(TvType.NSFW)
 
-    // ------------------------------------------------------------------------
-    // Network companion – includes Cloudflare detection & bypass
-    // ------------------------------------------------------------------------
     companion object Network {
         private const val TAG = "FamilyPorn"
 
@@ -177,12 +174,6 @@ class FamilyPorn : MainAPI() {
         val document = getDocument(url)
         val results = document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
         return newSearchResponseList(results, hasNext = true)
-    }
-
-    override suspend fun quickSearch(query: String): List<SearchResponse>? {
-        // Explicitly type the variable to help the compiler resolve the 'search' property
-        val result: SearchResponseList = search(query, 1)
-        return result.search
     }
 
     // ------------------------------------------------------------------------
