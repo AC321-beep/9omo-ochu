@@ -17,7 +17,6 @@ import com.lagradost.api.Log
 import okhttp3.Interceptor
 import okhttp3.Response
 
-// ---- OkHttp Interceptor ----
 object CFBypassInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
@@ -41,7 +40,6 @@ object CFBypassInterceptor : Interceptor {
     }
 }
 
-// ---- WebView dialog (starts expanded) ----
 class CloudflareWebViewDialog(
     private val targetUrl: String,
     private val onFinished: ((Boolean) -> Unit)? = null
@@ -86,7 +84,6 @@ class CloudflareWebViewDialog(
         handler.postDelayed(cookiePollRunnable, POLL_INTERVAL_MS)
     }
 
-    // ✅ Start the dialog fully expanded
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         val dialog = super.onCreateDialog(savedInstanceState)
         (dialog as? BottomSheetDialog)?.behavior?.apply {
