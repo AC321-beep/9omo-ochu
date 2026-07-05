@@ -13,7 +13,6 @@ class FamilyPornPlugin : Plugin() {
         registerMainAPI(FamilyPorn())
         registerExtractorAPI(FamilyPornExtractor())
 
-        // ✅ Correct settings hook – opens a DialogFragment
         this.openSettings = { ctx ->
             val activity = ctx as AppCompatActivity
             val frag = FamilyPornSettingsFragment()
@@ -22,7 +21,6 @@ class FamilyPornPlugin : Plugin() {
     }
 
     companion object {
-        // Persistent storage using CloudStream's getKey/setKey
         var cfCookies: String
             get() = getKey("FAMILYPORN_CF_COOKIES") ?: ""
             set(value) { setKey("FAMILYPORN_CF_COOKIES", value) }
