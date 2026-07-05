@@ -8,22 +8,21 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
-import com.google.android.material.bottomsheet.BottomSheetDialogFragment
-import com.google.android.material.bottomsheet.BottomSheetBehavior
-import com.google.android.material.bottomsheet.BottomSheetDialog
+import androidx.fragment.app.DialogFragment
+import androidx.core.content.ContextCompat
 
-class FamilyPornSettingsFragment : BottomSheetDialogFragment() {
+class FamilyPornSettingsFragment : DialogFragment() {
 
     @SuppressLint("SetTextI18n")
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val root = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 24, 32, 24)
+            setBackgroundColor(0xFF1A1A2E.toInt())
         }
 
         // Title
@@ -34,7 +33,7 @@ class FamilyPornSettingsFragment : BottomSheetDialogFragment() {
             setPadding(0, 0, 0, 16)
         })
 
-        // Explanation text (like in screenshot)
+        // Explanation text
         root.addView(TextView(requireContext()).apply {
             text = "Cloudflare Protection:\nIf you see a \"Just a moment\" screen, tap below to open a WebView and solve the challenge. Cookies will be saved automatically."
             textSize = 13f
@@ -42,9 +41,12 @@ class FamilyPornSettingsFragment : BottomSheetDialogFragment() {
             setPadding(0, 0, 0, 16)
         })
 
-        // Bypass button – updates based on saved cookies
-        val bypassBtn = Button(requireContext()).apply {
+        // ---- Bypass / Refresh text (clickable) ----
+        val bypassText = TextView(requireContext()).apply {
             text = if (FamilyPornPlugin.cfCookies.isNotBlank()) "✅ CF Cookies Saved – Refresh" else "🛡️ Bypass Cloudflare"
+            textSize = 16f
+            setTextColor(0xFF4CAF50.toInt())
+            setPadding(0, 0, 0, 8)
             setOnClickListener {
                 val dialog = CloudflareWebViewDialog(
                     targetUrl = "https://familypornhd.com",
@@ -57,14 +59,15 @@ class FamilyPornSettingsFragment : BottomSheetDialogFragment() {
                 )
                 dialog.show(parentFragmentManager, "familyporn_cf_bypass")
             }
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                .also { it.bottomMargin = 8 }
         }
-        root.addView(bypassBtn)
+        root.addView(bypassText)
 
-        // Clear CF Cookies button
-        val clearBtn = Button(requireContext()).apply {
+        // ---- Clear CF Cookies text (clickable) ----
+        root.addView(TextView(requireContext()).apply {
             text = "🗑️ Clear CF Cookies"
+            textSize = 16f
+            setTextColor(0xFFF44336.toInt())
+            setPadding(0, 0, 0, 8)
             setOnClickListener {
                 AlertDialog.Builder(requireContext())
                     .setTitle("Clear CF Cookies?")
@@ -82,20 +85,20 @@ class FamilyPornSettingsFragment : BottomSheetDialogFragment() {
                         FamilyPornPlugin.cfCookies = ""
                         FamilyPornPlugin.cfUserAgent = ""
                         FamilyPornPlugin.cfCookieHost = ""
-                        bypassBtn.text = "🛡️ Bypass Cloudflare"
+                        bypassText.text = "🛡️ Bypass Cloudflare"
                         Toast.makeText(context, "✅ CF Cookies cleared", Toast.LENGTH_SHORT).show()
                     }
                     .setNegativeButton("Cancel", null)
                     .show()
             }
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                .also { it.bottomMargin = 8 }
-        }
-        root.addView(clearBtn)
+        })
 
-        // Save & Restart button
-        val restartBtn = Button(requireContext()).apply {
+        // ---- Save & Restart text (clickable) ----
+        root.addView(TextView(requireContext()).apply {
             text = "💾 Save & Restart"
+            textSize = 16f
+            setTextColor(0xFF2196F3.toInt())
+            setPadding(0, 0, 0, 8)
             setOnClickListener {
                 AlertDialog.Builder(requireContext())
                     .setTitle("Restart App?")
@@ -110,15 +113,15 @@ class FamilyPornSettingsFragment : BottomSheetDialogFragment() {
                     .setNegativeButton("No", null)
                     .show()
             }
-        }
-        root.addView(restartBtn)
+        })
 
         return root
     }
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         val dialog = super.onCreateDialog(savedInstanceState)
-        (dialog as? BottomSheetDialog)?.behavior?.state = BottomSheetBehavior.STATE_EXPANDED
+        dialog.setTitle("FamilyPorn Settings")
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         return dialog
     }
 }
