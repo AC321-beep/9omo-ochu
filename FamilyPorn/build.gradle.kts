@@ -1,3 +1,12 @@
+android {
+    buildFeatures {
+        buildConfig = true
+    }
+}
+
+dependencies {
+    implementation("com.google.android.material:material:1.14.0")
+}
 cloudstream {
     authors     = listOf("AC321-beep")
     language    = "en"
