@@ -25,7 +25,6 @@ class FamilyPornSettingsFragment(private val plugin: Plugin) : BottomSheetDialog
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View? {
-        // Hardcode the package name – works without BuildConfig
         val packageName = "com.familyporn"
         val id = plugin.resources!!.getIdentifier(
             "bottom_sheet_layout",
@@ -65,6 +64,7 @@ class FamilyPornSettingsFragment(private val plugin: Plugin) : BottomSheetDialog
             )
             dialog.show(parentFragmentManager, "familyporn_cf_bypass")
         }
+        // Set initial text with emoji if cookies exist
         if (FamilyPornPlugin.cfCookies.isNotBlank()) {
             bypassBtn.text = "✅ CF Cookies Saved – Refresh"
         } else {
