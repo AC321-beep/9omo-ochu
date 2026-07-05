@@ -1,13 +1,16 @@
 package com.familyporn
 
 import android.util.Log
+import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.FragmentActivity
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
 
 class FamilyPorn : MainAPI() {
     override var mainUrl = "https://familypornhd.com"
@@ -20,7 +23,6 @@ class FamilyPorn : MainAPI() {
     companion object Network {
         private const val TAG = "FamilyPorn"
 
-        // Cloudflare detection phrases
         private val CF_BLOCKER_PHRASES = listOf(
             "just a moment", "checking your browser", "ddos-guard",
             "attention required", "verify you are human", "cloudflare",
@@ -35,15 +37,12 @@ class FamilyPorn : MainAPI() {
                 Log.d(TAG, "Blocked by status code ${response.code}")
                 return true
             }
-
             val text = response.text
             val lower = text.lowercase()
-
             if (CF_BLOCKER_PHRASES.any { lower.contains(it) }) {
                 Log.d(TAG, "Blocked by phrase match")
                 return true
             }
-
             val titleMatch = Regex("<title>(.*?)</title>", RegexOption.IGNORE_CASE).find(text)
             if (titleMatch != null) {
                 val title = titleMatch.groupValues[1].lowercase()
@@ -52,76 +51,92 @@ class FamilyPorn : MainAPI() {
                     return true
                 }
             }
-
             if (text.contains("cf-challenge") || text.contains("_cf_chl_opt")) {
                 Log.d(TAG, "Blocked by cf-challenge elements")
                 return true
             }
-
             if (text.length < 50000 && text.contains("<script") && lower.contains("challenge")) {
                 Log.d(TAG, "Blocked: small HTML with challenge script")
                 return true
             }
-
             return false
         }
 
-        private suspend fun showCFDialogIfNeeded(url: String): Boolean {
-            Log.d(TAG, "Attempting to show CF dialog for $url")
-            val activity = com.lagradost.cloudstream3.CommonActivity.activity ?: return false
-            return suspendCoroutine { continuation ->
-                activity.runOnUiThread {
-                    val dialog = CloudflareWebViewDialog(
-                        targetUrl = url,
-                        onFinished = { success ->
-                            if (success) Log.d(TAG, "CF solved") else Log.w(TAG, "CF dismissed")
+        // ---- CF dialog helper (exactly like AniDb) ----
+        private suspend fun showCFDialogIfNeeded(url: String): Boolean =
+            withContext(Dispatchers.Main) {
+                suspendCancellableCoroutine { continuation ->
+                    val activity = com.lagradost.cloudstream3.CommonActivity.activity as? AppCompatActivity
+                    if (activity == null || activity.isFinishing || activity.isDestroyed) {
+                        Log.e(TAG, "No activity available to show CF dialog")
+                        continuation.resume(false)
+                        return@suspendCancellableCoroutine
+                    }
+                    var resumed = false
+                    fun safeResume(success: Boolean) {
+                        if (!resumed) {
+                            resumed = true
                             continuation.resume(success)
                         }
-                    )
-                    if (activity is FragmentActivity) {
-                        dialog.show(activity.supportFragmentManager, "familyporn_cf_bypass")
-                    } else {
-                        Log.e(TAG, "Activity not FragmentActivity")
-                        continuation.resume(false)
                     }
+                    val dialog = CloudflareWebViewDialog(
+                        targetUrl = url,
+                        onFinished = { success -> safeResume(success) }
+                    )
+                    continuation.invokeOnCancellation {
+                        activity.runOnUiThread { runCatching { dialog.dismissAllowingStateLoss() } }
+                    }
+                    dialog.show(activity.supportFragmentManager, "familyporn_cf_bypass_auto")
                 }
             }
+
+        // ---- Network functions with interceptor ----
+        suspend fun appGet(
+            url: String,
+            headers: Map<String, String> = emptyMap()
+        ): com.lagradost.nicehttp.NiceResponse {
+            var response = app.get(url, headers = headers, interceptor = CFBypassInterceptor)
+            if (isCloudflareBlocked(response)) {
+                Log.d(TAG, "CF detected, showing dialog")
+                val solved = showCFDialogIfNeeded(url)
+                if (solved) {
+                    Log.d(TAG, "CF solved, retrying")
+                    response = app.get(url, headers = headers, interceptor = CFBypassInterceptor)
+                } else {
+                    Log.w(TAG, "CF not solved, returning blocked response")
+                }
+            }
+            return response
         }
 
+        suspend fun appPost(
+            url: String,
+            data: Map<String, String> = emptyMap(),
+            headers: Map<String, String> = emptyMap()
+        ): com.lagradost.nicehttp.NiceResponse {
+            var response = app.post(url, data = data, headers = headers, interceptor = CFBypassInterceptor)
+            if (isCloudflareBlocked(response)) {
+                Log.d(TAG, "CF detected in POST, showing dialog")
+                val solved = showCFDialogIfNeeded(url)
+                if (solved) {
+                    Log.d(TAG, "CF solved, retrying POST")
+                    response = app.post(url, data = data, headers = headers, interceptor = CFBypassInterceptor)
+                }
+            }
+            return response
+        }
+
+        // ---- Public wrappers ----
         suspend fun getDocument(
             url: String,
             headers: Map<String, String>? = null,
-            cookies: Map<String, String>? = null,
+            cookies: Map<String, String>? = null, // unused, interceptor handles cookies
             referer: String? = null
         ): Document {
             Log.d(TAG, "getDocument: $url")
-            var response = app.get(
-                url,
-                headers = headers ?: emptyMap(),
-                cookies = cookies ?: emptyMap(),
-                referer = referer,
-                interceptor = CFBypassInterceptor
-            )
-            if (isCloudflareBlocked(response)) {
-                val solved = showCFDialogIfNeeded(url)
-                if (solved) {
-                    Log.d(TAG, "CF solved, retrying getDocument")
-                    response = app.get(
-                        url,
-                        headers = headers ?: emptyMap(),
-                        cookies = cookies ?: emptyMap(),
-                        referer = referer,
-                        interceptor = CFBypassInterceptor
-                    )
-                    if (isCloudflareBlocked(response)) {
-                        Log.e(TAG, "Still blocked after retry")
-                    } else {
-                        Log.d(TAG, "getDocument succeeded after CF solve")
-                    }
-                } else {
-                    Log.w(TAG, "CF dialog not solved, returning current response")
-                }
-            }
+            val finalHeaders = headers?.toMutableMap() ?: mutableMapOf()
+            if (referer != null) finalHeaders["Referer"] = referer
+            val response = appGet(url, finalHeaders)
             return response.document
         }
 
@@ -131,25 +146,9 @@ class FamilyPorn : MainAPI() {
             cookies: Map<String, String>? = null,
             referer: String? = null
         ): String {
-            var response = app.get(
-                url,
-                headers = headers ?: emptyMap(),
-                cookies = cookies ?: emptyMap(),
-                referer = referer,
-                interceptor = CFBypassInterceptor
-            )
-            if (isCloudflareBlocked(response)) {
-                val solved = showCFDialogIfNeeded(url)
-                if (solved) {
-                    response = app.get(
-                        url,
-                        headers = headers ?: emptyMap(),
-                        cookies = cookies ?: emptyMap(),
-                        referer = referer,
-                        interceptor = CFBypassInterceptor
-                    )
-                }
-            }
+            val finalHeaders = headers?.toMutableMap() ?: mutableMapOf()
+            if (referer != null) finalHeaders["Referer"] = referer
+            val response = appGet(url, finalHeaders)
             return response.text
         }
 
@@ -160,32 +159,14 @@ class FamilyPorn : MainAPI() {
             cookies: Map<String, String>? = null,
             referer: String? = null
         ): String {
-            var response = app.post(
-                url,
-                data = data ?: emptyMap(),
-                headers = headers ?: emptyMap(),
-                cookies = cookies ?: emptyMap(),
-                referer = referer,
-                interceptor = CFBypassInterceptor
-            )
-            if (isCloudflareBlocked(response)) {
-                val solved = showCFDialogIfNeeded(url)
-                if (solved) {
-                    response = app.post(
-                        url,
-                        data = data ?: emptyMap(),
-                        headers = headers ?: emptyMap(),
-                        cookies = cookies ?: emptyMap(),
-                        referer = referer,
-                        interceptor = CFBypassInterceptor
-                    )
-                }
-            }
+            val finalHeaders = headers?.toMutableMap() ?: mutableMapOf()
+            if (referer != null) finalHeaders["Referer"] = referer
+            val response = appPost(url, data ?: emptyMap(), finalHeaders)
             return response.text
         }
     }
 
-    // ---------- Main page ----------
+    // ---------- MainPage, Search, Load, LoadLinks (use getDocument) ----------
     override val mainPage = mainPageOf(
         "${mainUrl}" to "All Porn Videos",
         "${mainUrl}/tag/redhead" to "Red Head",
@@ -219,10 +200,8 @@ class FamilyPorn : MainAPI() {
         return newSearchResponseList(results, hasNext = true)
     }
 
-    // ---------- Load video ----------
     override suspend fun load(url: String): LoadResponse {
         val document = getDocument(url)
-
         Log.d("FamilyPorn", "Video page HTML snippet: ${document.html().take(500)}")
 
         val title = document.selectFirst("meta[property=og:title]")?.attr("content")
@@ -251,7 +230,6 @@ class FamilyPorn : MainAPI() {
 
         return newMovieLoadResponse(title, url, type = TvType.NSFW, data = url) {
             this.posterUrl = posterUrl
-            // ✅ Fix poster 403: add Referer and Cookie
             this.posterHeaders = mapOf(
                 "Referer" to mainUrl,
                 "Cookie" to FamilyPornPlugin.cfCookies
@@ -262,7 +240,6 @@ class FamilyPorn : MainAPI() {
         }
     }
 
-    // ---------- Load links ----------
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -271,9 +248,6 @@ class FamilyPorn : MainAPI() {
     ): Boolean {
         Log.d("FamilyPorn", "loadLinks: $data")
         val document = getDocument(data)
-
-        // Log HTML snippet to see if we have the iframe
-        Log.d("FamilyPorn", "loadLinks HTML snippet: ${document.html().take(500)}")
 
         var iframeSrc = document.selectFirst("div.embed-container iframe")?.attr("src")
         if (iframeSrc.isNullOrBlank()) {
@@ -289,7 +263,6 @@ class FamilyPorn : MainAPI() {
             iframeSrc = document.selectFirst("iframe[src*='bestwish']")?.attr("src")
         }
 
-        // Regex fallback
         if (iframeSrc.isNullOrBlank()) {
             val html = document.html()
             val patterns = listOf(
@@ -313,14 +286,7 @@ class FamilyPorn : MainAPI() {
         }
 
         Log.d("FamilyPorn", "iframe src: $iframeSrc")
-
-        // Load the extractor – this will call our FamilyPornExtractor
-        loadExtractor(
-            url = iframeSrc,
-            referer = data,
-            subtitleCallback = subtitleCallback,
-            callback = callback
-        )
+        loadExtractor(iframeSrc, referer = data, subtitleCallback = subtitleCallback, callback = callback)
         return true
     }
 
