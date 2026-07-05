@@ -13,6 +13,10 @@ class FamilyPornPlugin : Plugin() {
         registerExtractorAPI(BestWish())
     }
 
+    override fun getSettingsFragment(): androidx.fragment.app.Fragment? {
+        return FamilyPornSettingsFragment(this)
+    }
+
     companion object {
         var cfCookies: String = ""
         var cfCookieHost: String = ""
