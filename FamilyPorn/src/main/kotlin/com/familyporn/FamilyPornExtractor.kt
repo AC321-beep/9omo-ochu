@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import kotlinx.coroutines.delay
 
 class FamilyPornExtractor : ExtractorApi() {
     override var name = "FamilyPornExtractor"
@@ -19,14 +20,13 @@ class FamilyPornExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Priority: Fireplayer first, then others
+        Log.d("FamilyPornExtractor", "getUrl called with URL: $url, referer: $referer")
         when {
             url.contains("watchstreamhd.com") -> fetchFireplayer(url, referer, callback)
             url.contains("videostreamingworld.com") -> fetchVideoStreamingWorld(url, referer, callback)
             url.contains("bestwish.lol") -> fetchBestWish(url, referer, callback)
             else -> {
-                Log.d("FamilyPornExtractor", "Unknown hoster: $url")
-                // Fallback: try generic loadExtractor with the URL
+                Log.d("FamilyPornExtractor", "Unknown hoster, falling back to generic loadExtractor")
                 loadExtractor(url, referer, subtitleCallback, callback)
             }
         }
@@ -51,18 +51,36 @@ class FamilyPornExtractor : ExtractorApi() {
             "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
         )
 
-        val response = FamilyPorn.postText(
+        var response = FamilyPorn.postText(
             url = posturl,
             data = postdata,
             headers = headers,
             referer = url
         )
 
+        // If response is empty or JSON parsing fails, retry after a short delay (for CF)
+        if (response.isBlank() || response == "[]" || response == "{}") {
+            Log.w("Fireplayer", "Empty response, retrying after 2s")
+            delay(2000)
+            response = FamilyPorn.postText(
+                url = posturl,
+                data = postdata,
+                headers = headers,
+                referer = url
+            )
+        }
+
         val mapper = jacksonObjectMapper()
-        val json = mapper.readValue(response, FireResponse::class.java)
+        val json = try {
+            mapper.readValue(response, FireResponse::class.java)
+        } catch (e: Exception) {
+            Log.e("Fireplayer", "JSON parsing error: ${e.message}, response: $response")
+            return
+        }
         val videolink = json.securedlink ?: json.videosource
 
         if (videolink != null) {
+            Log.d("Fireplayer", "Video link obtained: $videolink")
             callback(
                 newExtractorLink(
                     source = "Fireplayer",
@@ -74,6 +92,8 @@ class FamilyPornExtractor : ExtractorApi() {
                     this.headers = mapOf("Origin" to "https://watchstreamhd.com")
                 }
             )
+        } else {
+            Log.e("Fireplayer", "No video link found in response")
         }
     }
 
@@ -100,15 +120,31 @@ class FamilyPornExtractor : ExtractorApi() {
             "sec-ch-ua-mobile" to "?0"
         )
 
-        val response = FamilyPorn.postText(
+        var response = FamilyPorn.postText(
             url = posturl,
             data = emptyMap(),
             headers = headers,
             referer = "https://videostreamingworld.com/"
         )
 
+        if (response.isBlank() || response == "[]" || response == "{}") {
+            Log.w("VideoStreamingWorld", "Empty response, retrying after 2s")
+            delay(2000)
+            response = FamilyPorn.postText(
+                url = posturl,
+                data = emptyMap(),
+                headers = headers,
+                referer = "https://videostreamingworld.com/"
+            )
+        }
+
         val mapper = jacksonObjectMapper()
-        val video: Video = mapper.readValue(response)
+        val video = try {
+            mapper.readValue(response, Video::class.java)
+        } catch (e: Exception) {
+            Log.e("VideoStreamingWorld", "JSON parsing error: ${e.message}, response: $response")
+            return
+        }
         val videoUrl = video.videoSource
 
         Log.d("VideoStreamingWorld", "videoUrl = $videoUrl")
@@ -145,14 +181,29 @@ class FamilyPornExtractor : ExtractorApi() {
             "sec-ch-ua-mobile" to "?0"
         )
 
-        val response = FamilyPorn.getText(
+        var response = FamilyPorn.getText(
             url = getUrl,
             headers = headers,
             referer = url
         )
 
+        if (response.isBlank() || response == "[]" || response == "{}") {
+            Log.w("BestWish", "Empty response, retrying after 2s")
+            delay(2000)
+            response = FamilyPorn.getText(
+                url = getUrl,
+                headers = headers,
+                referer = url
+            )
+        }
+
         val mapper = jacksonObjectMapper()
-        val stream: Stream = mapper.readValue(response)
+        val stream = try {
+            mapper.readValue(response, Stream::class.java)
+        } catch (e: Exception) {
+            Log.e("BestWish", "JSON parsing error: ${e.message}, response: $response")
+            return
+        }
         val videoUrl = stream.streaming_url
 
         Log.d("BestWish", "videoUrl = $videoUrl")
@@ -168,7 +219,7 @@ class FamilyPornExtractor : ExtractorApi() {
         )
     }
 
-    // Data classes (same as before)
+    // Data classes
     data class FireResponse(
         @JsonProperty("securedLink") val securedlink: String? = null,
         @JsonProperty("videoSource") val videosource: String? = null
