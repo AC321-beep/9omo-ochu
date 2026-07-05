@@ -105,6 +105,7 @@ class FamilyPorn : MainAPI() {
             if (isCloudflareBlocked(response)) {
                 val solved = showCFDialogIfNeeded(url)
                 if (solved) {
+                    Log.d(TAG, "CF solved, retrying getDocument")
                     response = app.get(
                         url,
                         headers = headers ?: emptyMap(),
@@ -112,6 +113,13 @@ class FamilyPorn : MainAPI() {
                         referer = referer,
                         interceptor = CFBypassInterceptor
                     )
+                    if (isCloudflareBlocked(response)) {
+                        Log.e(TAG, "Still blocked after retry")
+                    } else {
+                        Log.d(TAG, "getDocument succeeded after CF solve")
+                    }
+                } else {
+                    Log.w(TAG, "CF dialog not solved, returning current response")
                 }
             }
             return response.document
@@ -211,57 +219,50 @@ class FamilyPorn : MainAPI() {
         return newSearchResponseList(results, hasNext = true)
     }
 
-    // ---------- Load video page – improved poster and title extraction ----------
+    // ---------- Load video ----------
     override suspend fun load(url: String): LoadResponse {
         val document = getDocument(url)
 
-        // Log first 500 chars to see the structure
-        Log.d("FamilyPorn", "Video page HTML: ${document.html().take(500)}")
+        Log.d("FamilyPorn", "Video page HTML snippet: ${document.html().take(500)}")
 
-        // Title – try multiple sources
         val title = document.selectFirst("meta[property=og:title]")?.attr("content")
             ?: document.selectFirst("h1")?.text()
             ?: document.selectFirst(".entry-title")?.text()
             ?: document.selectFirst("title")?.text()
             ?: "Unknown Title"
 
-        // Description
         val description = document.selectFirst("meta[property=og:description]")?.attr("content")
             ?: document.selectFirst("meta[name=description]")?.attr("content")
             ?: ""
 
-        // Tags
         val tags = document.select("p.entry-tags a").map { it.text().lowercase() }.take(5)
 
-        // Poster – try multiple sources
         var posterUrl = document.selectFirst("meta[property=og:image]")?.attr("content")
-        if (posterUrl.isNullOrBlank()) {
-            posterUrl = document.selectFirst("meta[name=twitter:image]")?.attr("content")
-        }
-        if (posterUrl.isNullOrBlank()) {
-            posterUrl = document.selectFirst("div.entry-content img")?.attr("src")
-        }
-        if (posterUrl.isNullOrBlank()) {
-            posterUrl = document.selectFirst("img.attachment-post-thumbnail")?.attr("src")
-        }
-        // Fallback: look for any large image
-        if (posterUrl.isNullOrBlank()) {
-            posterUrl = document.select("img").firstOrNull { it.attr("src").contains("familypornhd.com") }?.attr("src")
-        }
+            ?: document.selectFirst("meta[name=twitter:image]")?.attr("content")
+            ?: document.selectFirst("div.entry-content img")?.attr("src")
+            ?: document.selectFirst("img.attachment-post-thumbnail")?.attr("src")
+            ?: document.select("img").firstOrNull { it.attr("src").contains("familypornhd.com") }?.attr("src")
 
-        // Recommendations
+        posterUrl = fixUrlNull(posterUrl)
+        Log.d("FamilyPorn", "Poster URL: $posterUrl")
+
         val recommendations = document.select("aside.g1-related-entries div.g1-collection li")
             .mapNotNull { it.toRecommendationResult() }
 
         return newMovieLoadResponse(title, url, type = TvType.NSFW, data = url) {
-            this.posterUrl = fixUrlNull(posterUrl)
+            this.posterUrl = posterUrl
+            // ✅ Fix poster 403: add Referer and Cookie
+            this.posterHeaders = mapOf(
+                "Referer" to mainUrl,
+                "Cookie" to FamilyPornPlugin.cfCookies
+            )
             this.plot = description
             this.tags = tags
             this.recommendations = recommendations
         }
     }
 
-    // ---------- Load links – improved iframe extraction ----------
+    // ---------- Load links ----------
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -271,10 +272,9 @@ class FamilyPorn : MainAPI() {
         Log.d("FamilyPorn", "loadLinks: $data")
         val document = getDocument(data)
 
-        // Log HTML to see what we're dealing with
-        Log.d("FamilyPorn", "Video page HTML for iframe: ${document.html().take(500)}")
+        // Log HTML snippet to see if we have the iframe
+        Log.d("FamilyPorn", "loadLinks HTML snippet: ${document.html().take(500)}")
 
-        // Try multiple selectors for iframe
         var iframeSrc = document.selectFirst("div.embed-container iframe")?.attr("src")
         if (iframeSrc.isNullOrBlank()) {
             iframeSrc = document.selectFirst("div.video-wrapper iframe")?.attr("src")
@@ -289,12 +289,11 @@ class FamilyPorn : MainAPI() {
             iframeSrc = document.selectFirst("iframe[src*='bestwish']")?.attr("src")
         }
 
-        // If still no iframe, try to find the embed URL in the page (JavaScript variable or link)
+        // Regex fallback
         if (iframeSrc.isNullOrBlank()) {
             val html = document.html()
-            // Look for common embed patterns
             val patterns = listOf(
-                Regex("""iframe.*?src=["'](https?://[^"']+\.com/[^"']+)["']""", RegexOption.IGNORE_CASE),
+                Regex("""<iframe.*?src=["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE),
                 Regex("""file:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE),
                 Regex("""sources:\s*\[[^\]]*file:\s*["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE),
                 Regex("""data-stream-url=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
@@ -315,7 +314,7 @@ class FamilyPorn : MainAPI() {
 
         Log.d("FamilyPorn", "iframe src: $iframeSrc")
 
-        // Load the extractor with the iframe URL
+        // Load the extractor – this will call our FamilyPornExtractor
         loadExtractor(
             url = iframeSrc,
             referer = data,
