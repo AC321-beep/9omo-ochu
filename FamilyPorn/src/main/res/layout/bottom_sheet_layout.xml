@@ -17,21 +17,21 @@
         android:id="@+id/cf_bypass_btn"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="🛡️ Bypass Cloudflare"
+        android:text="Bypass Cloudflare"
         android:layout_marginBottom="8dp"/>
 
     <Button
         android:id="@+id/cf_clear_btn"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="🗑️ Clear CF Cookies"
+        android:text="Clear CF Cookies"
         android:layout_marginBottom="8dp"/>
 
     <Button
         android:id="@+id/save"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Save & Restart"
+        android:text="Save and Restart"
         android:layout_marginTop="8dp"/>
 
 </LinearLayout>
