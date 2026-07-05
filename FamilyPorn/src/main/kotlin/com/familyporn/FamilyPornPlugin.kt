@@ -1,6 +1,7 @@
 package com.familyporn
 
 import android.content.Context
+import androidx.fragment.app.Fragment
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 
@@ -13,7 +14,7 @@ class FamilyPornPlugin : Plugin() {
         registerExtractorAPI(BestWish())
     }
 
-    override fun getSettingsFragment(): androidx.fragment.app.Fragment? {
+    override fun getSettingsFragment(): Fragment? {
         return FamilyPornSettingsFragment(this)
     }
 
