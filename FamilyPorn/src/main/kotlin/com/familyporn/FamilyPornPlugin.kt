@@ -15,7 +15,7 @@ class FamilyPornPlugin : Plugin() {
     }
 
     override fun getSettingsFragment(): Fragment? {
-        return FamilyPornSettingsFragment(this)
+        return FamilyPornSettingsFragment()
     }
 
     companion object {
