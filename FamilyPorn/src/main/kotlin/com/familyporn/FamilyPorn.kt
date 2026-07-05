@@ -7,11 +7,17 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 class FamilyPorn : MainAPI() {
-    // ... your existing properties (mainUrl, name, etc.) ...
+    override var mainUrl = "https://familypornhd.com"
+    override var name = "FamilyPorn"
+    override val hasMainPage = true
+    override var lang = "en"
+    override val hasQuickSearch = false
+    override val supportedTypes = setOf(TvType.NSFW)
 
     companion object Network {
         private const val TAG = "FamilyPorn"
 
+        // ---------- Cloudflare detection ----------
         private val CF_BLOCKER_PHRASES = listOf(
             "just a moment", "checking your browser",
             "ddos-guard", "attention required",
@@ -24,6 +30,7 @@ class FamilyPorn : MainAPI() {
             return CF_BLOCKER_PHRASES.any { text.contains(it) }
         }
 
+        // ---------- Show the WebView dialog ----------
         private suspend fun showCFDialogIfNeeded(url: String) {
             if (FamilyPornPlugin.cfCookies.contains("cf_clearance")) return
             Log.d(TAG, "Showing CF WebView dialog for $url")
@@ -43,28 +50,49 @@ class FamilyPorn : MainAPI() {
             }
         }
 
+        // ---------- Build headers with saved cookie ----------
+        private fun buildHeaders(headers: Map<String, String>? = null): Map<String, String> {
+            val base = headers?.toMutableMap() ?: mutableMapOf()
+            // If we have a saved cf_clearance, add it to the Cookie header
+            if (FamilyPornPlugin.cfCookies.isNotEmpty()) {
+                val existingCookie = base["Cookie"] ?: ""
+                val fresh = FamilyPornPlugin.cfCookies
+                base["Cookie"] = if (existingCookie.isNotEmpty()) {
+                    // Merge, avoid duplicates
+                    val parts = existingCookie.split(";").map { it.trim() }
+                        .filter { it.isNotEmpty() && !it.startsWith("cf_clearance=") }
+                    (parts + fresh).distinct().joinToString("; ")
+                } else {
+                    fresh
+                }
+            }
+            // Add a realistic User-Agent if not set
+            if (!base.containsKey("User-Agent")) {
+                base["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+            }
+            return base
+        }
+
+        // ---------- Public network functions ----------
         suspend fun getDocument(
             url: String,
             headers: Map<String, String>? = null,
-            cookies: Map<String, String>? = null,
+            cookies: Map<String, String>? = null,   // not used but kept for compatibility
             referer: String? = null
         ): Document {
-            var response = app.get(
-                url = url,
-                headers = headers ?: emptyMap(),
-                cookies = cookies ?: emptyMap(),
-                referer = referer,
-                interceptor = CFBypassInterceptor
-            )
+            val finalHeaders = buildHeaders(headers)
+            var response = app.get(url, headers = finalHeaders, cookies = cookies ?: emptyMap(), referer = referer)
             if (isCloudflareBlocked(response)) {
+                Log.d(TAG, "CF detected on GET $url – showing dialog")
                 showCFDialogIfNeeded(url)
-                response = app.get(
-                    url = url,
-                    headers = headers ?: emptyMap(),
-                    cookies = cookies ?: emptyMap(),
-                    referer = referer,
-                    interceptor = CFBypassInterceptor
-                )
+                // Retry with saved cookie (now included via buildHeaders)
+                val retryHeaders = buildHeaders(headers)
+                response = app.get(url, headers = retryHeaders, cookies = cookies ?: emptyMap(), referer = referer)
+                // If still blocked, return empty document to avoid crash
+                if (isCloudflareBlocked(response)) {
+                    Log.e(TAG, "Still blocked after retry for $url")
+                    return Document("")
+                }
             }
             return response.document
         }
@@ -75,22 +103,17 @@ class FamilyPorn : MainAPI() {
             cookies: Map<String, String>? = null,
             referer: String? = null
         ): String {
-            var response = app.get(
-                url = url,
-                headers = headers ?: emptyMap(),
-                cookies = cookies ?: emptyMap(),
-                referer = referer,
-                interceptor = CFBypassInterceptor
-            )
+            val finalHeaders = buildHeaders(headers)
+            var response = app.get(url, headers = finalHeaders, cookies = cookies ?: emptyMap(), referer = referer)
             if (isCloudflareBlocked(response)) {
+                Log.d(TAG, "CF detected on GET text $url – showing dialog")
                 showCFDialogIfNeeded(url)
-                response = app.get(
-                    url = url,
-                    headers = headers ?: emptyMap(),
-                    cookies = cookies ?: emptyMap(),
-                    referer = referer,
-                    interceptor = CFBypassInterceptor
-                )
+                val retryHeaders = buildHeaders(headers)
+                response = app.get(url, headers = retryHeaders, cookies = cookies ?: emptyMap(), referer = referer)
+                if (isCloudflareBlocked(response)) {
+                    Log.e(TAG, "Still blocked after retry for $url")
+                    return ""
+                }
             }
             return response.text
         }
@@ -102,30 +125,35 @@ class FamilyPorn : MainAPI() {
             cookies: Map<String, String>? = null,
             referer: String? = null
         ): String {
+            val finalHeaders = buildHeaders(headers)
             var response = app.post(
-                url = url,
+                url,
                 data = data ?: emptyMap(),
-                headers = headers ?: emptyMap(),
+                headers = finalHeaders,
                 cookies = cookies ?: emptyMap(),
-                referer = referer,
-                interceptor = CFBypassInterceptor
+                referer = referer
             )
             if (isCloudflareBlocked(response)) {
+                Log.d(TAG, "CF detected on POST $url – showing dialog")
                 showCFDialogIfNeeded(url)
+                val retryHeaders = buildHeaders(headers)
                 response = app.post(
-                    url = url,
+                    url,
                     data = data ?: emptyMap(),
-                    headers = headers ?: emptyMap(),
+                    headers = retryHeaders,
                     cookies = cookies ?: emptyMap(),
-                    referer = referer,
-                    interceptor = CFBypassInterceptor
+                    referer = referer
                 )
+                if (isCloudflareBlocked(response)) {
+                    Log.e(TAG, "Still blocked after retry for $url")
+                    return ""
+                }
             }
             return response.text
         }
-
-        // getCookies removed – not needed; cookies are handled by the interceptor
     }
 
-    // ... the rest of your class (mainPage, getMainPage, search, load, loadLinks, helpers) remains exactly as before ...
+    // ---------- MainPage, Search, Load, LoadLinks ----------
+    // (These stay exactly as they were – they call the Network functions above.)
+    // ... your existing code for mainPage, getMainPage, search, load, loadLinks, helpers ...
 }
