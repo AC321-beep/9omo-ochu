@@ -8,12 +8,12 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
-import androidx.core.content.ContextCompat
 
 class FamilyPornSettingsFragment : DialogFragment() {
 
@@ -22,7 +22,6 @@ class FamilyPornSettingsFragment : DialogFragment() {
         val root = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 24, 32, 24)
-            setBackgroundColor(0xFF1A1A2E.toInt())
         }
 
         // Title
@@ -33,7 +32,7 @@ class FamilyPornSettingsFragment : DialogFragment() {
             setPadding(0, 0, 0, 16)
         })
 
-        // Explanation text
+        // Explanation (as in the screenshot)
         root.addView(TextView(requireContext()).apply {
             text = "Cloudflare Protection:\nIf you see a \"Just a moment\" screen, tap below to open a WebView and solve the challenge. Cookies will be saved automatically."
             textSize = 13f
@@ -41,12 +40,9 @@ class FamilyPornSettingsFragment : DialogFragment() {
             setPadding(0, 0, 0, 16)
         })
 
-        // ---- Bypass / Refresh text (clickable) ----
-        val bypassText = TextView(requireContext()).apply {
+        // Bypass button – updates dynamically
+        val bypassBtn = Button(requireContext()).apply {
             text = if (FamilyPornPlugin.cfCookies.isNotBlank()) "✅ CF Cookies Saved – Refresh" else "🛡️ Bypass Cloudflare"
-            textSize = 16f
-            setTextColor(0xFF4CAF50.toInt())
-            setPadding(0, 0, 0, 8)
             setOnClickListener {
                 val dialog = CloudflareWebViewDialog(
                     targetUrl = "https://familypornhd.com",
@@ -59,15 +55,14 @@ class FamilyPornSettingsFragment : DialogFragment() {
                 )
                 dialog.show(parentFragmentManager, "familyporn_cf_bypass")
             }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .also { it.bottomMargin = 8 }
         }
-        root.addView(bypassText)
+        root.addView(bypassBtn)
 
-        // ---- Clear CF Cookies text (clickable) ----
-        root.addView(TextView(requireContext()).apply {
+        // Clear CF Cookies button
+        val clearBtn = Button(requireContext()).apply {
             text = "🗑️ Clear CF Cookies"
-            textSize = 16f
-            setTextColor(0xFFF44336.toInt())
-            setPadding(0, 0, 0, 8)
             setOnClickListener {
                 AlertDialog.Builder(requireContext())
                     .setTitle("Clear CF Cookies?")
@@ -85,20 +80,20 @@ class FamilyPornSettingsFragment : DialogFragment() {
                         FamilyPornPlugin.cfCookies = ""
                         FamilyPornPlugin.cfUserAgent = ""
                         FamilyPornPlugin.cfCookieHost = ""
-                        bypassText.text = "🛡️ Bypass Cloudflare"
+                        bypassBtn.text = "🛡️ Bypass Cloudflare"
                         Toast.makeText(context, "✅ CF Cookies cleared", Toast.LENGTH_SHORT).show()
                     }
                     .setNegativeButton("Cancel", null)
                     .show()
             }
-        })
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .also { it.bottomMargin = 8 }
+        }
+        root.addView(clearBtn)
 
-        // ---- Save & Restart text (clickable) ----
-        root.addView(TextView(requireContext()).apply {
+        // Save & Restart button
+        val restartBtn = Button(requireContext()).apply {
             text = "💾 Save & Restart"
-            textSize = 16f
-            setTextColor(0xFF2196F3.toInt())
-            setPadding(0, 0, 0, 8)
             setOnClickListener {
                 AlertDialog.Builder(requireContext())
                     .setTitle("Restart App?")
@@ -113,7 +108,8 @@ class FamilyPornSettingsFragment : DialogFragment() {
                     .setNegativeButton("No", null)
                     .show()
             }
-        })
+        }
+        root.addView(restartBtn)
 
         return root
     }
