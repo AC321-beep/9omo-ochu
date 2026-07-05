@@ -182,7 +182,11 @@ class FamilyPorn : MainAPI() {
         return newSearchResponseList(results, hasNext = true)
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query).search
+    override suspend fun quickSearch(query: String): List<SearchResponse>? {
+        // Fixed: store the result and then access its 'search' property
+        val response = search(query, 1)
+        return response.search
+    }
 
     // ------------------------------------------------------------------------
     // Load video page
