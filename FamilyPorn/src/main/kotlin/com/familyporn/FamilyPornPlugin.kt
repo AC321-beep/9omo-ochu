@@ -13,6 +13,7 @@ class FamilyPornPlugin : Plugin() {
         registerMainAPI(FamilyPorn())
         registerExtractorAPI(FamilyPornExtractor())
 
+        // Correct settings hook
         this.openSettings = { ctx ->
             val activity = ctx as AppCompatActivity
             val frag = FamilyPornSettingsFragment()
