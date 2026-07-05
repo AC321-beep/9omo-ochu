@@ -20,19 +20,28 @@ class FamilyPornExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        Log.d("FamilyPornExtractor", "getUrl called with URL: $url, referer: $referer")
+        Log.d("FamilyPornExtractor", "⭐ getUrl called with URL: $url, referer: $referer")
         when {
-            url.contains("watchstreamhd.com") -> fetchFireplayer(url, referer, callback)
-            url.contains("videostreamingworld.com") -> fetchVideoStreamingWorld(url, referer, callback)
-            url.contains("bestwish.lol") -> fetchBestWish(url, referer, callback)
+            url.contains("watchstreamhd.com") -> {
+                Log.d("FamilyPornExtractor", "➡️ Using Fireplayer branch")
+                fetchFireplayer(url, referer, callback)
+            }
+            url.contains("videostreamingworld.com") -> {
+                Log.d("FamilyPornExtractor", "➡️ Using VideoStreamingWorld branch")
+                fetchVideoStreamingWorld(url, referer, callback)
+            }
+            url.contains("bestwish.lol") -> {
+                Log.d("FamilyPornExtractor", "➡️ Using BestWish branch")
+                fetchBestWish(url, referer, callback)
+            }
             else -> {
-                Log.d("FamilyPornExtractor", "Unknown hoster, falling back to generic loadExtractor")
+                Log.d("FamilyPornExtractor", "⚠️ Unknown hoster, falling back to generic loadExtractor")
                 loadExtractor(url, referer, subtitleCallback, callback)
             }
         }
     }
 
-    // ----- Fireplayer logic -----
+    // ----- Fireplayer logic (with logging) -----
     private suspend fun fetchFireplayer(
         url: String,
         referer: String?,
@@ -51,14 +60,15 @@ class FamilyPornExtractor : ExtractorApi() {
             "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
         )
 
+        Log.d("Fireplayer", "POST to $posturl with data: $postdata")
         var response = FamilyPorn.postText(
             url = posturl,
             data = postdata,
             headers = headers,
             referer = url
         )
+        Log.d("Fireplayer", "POST response (first 200 chars): ${response.take(200)}")
 
-        // If response is empty or JSON parsing fails, retry after a short delay (for CF)
         if (response.isBlank() || response == "[]" || response == "{}") {
             Log.w("Fireplayer", "Empty response, retrying after 2s")
             delay(2000)
@@ -68,6 +78,7 @@ class FamilyPornExtractor : ExtractorApi() {
                 headers = headers,
                 referer = url
             )
+            Log.d("Fireplayer", "Retry response (first 200 chars): ${response.take(200)}")
         }
 
         val mapper = jacksonObjectMapper()
@@ -80,7 +91,7 @@ class FamilyPornExtractor : ExtractorApi() {
         val videolink = json.securedlink ?: json.videosource
 
         if (videolink != null) {
-            Log.d("Fireplayer", "Video link obtained: $videolink")
+            Log.d("Fireplayer", "✅ Video link obtained: $videolink")
             callback(
                 newExtractorLink(
                     source = "Fireplayer",
@@ -93,11 +104,11 @@ class FamilyPornExtractor : ExtractorApi() {
                 }
             )
         } else {
-            Log.e("Fireplayer", "No video link found in response")
+            Log.e("Fireplayer", "❌ No video link found in response")
         }
     }
 
-    // ----- VideoStreamingWorld logic -----
+    // ----- VideoStreamingWorld logic (with logging) -----
     private suspend fun fetchVideoStreamingWorld(
         url: String,
         referer: String?,
@@ -120,12 +131,14 @@ class FamilyPornExtractor : ExtractorApi() {
             "sec-ch-ua-mobile" to "?0"
         )
 
+        Log.d("VideoStreamingWorld", "POST to $posturl")
         var response = FamilyPorn.postText(
             url = posturl,
             data = emptyMap(),
             headers = headers,
             referer = "https://videostreamingworld.com/"
         )
+        Log.d("VideoStreamingWorld", "Response (first 200 chars): ${response.take(200)}")
 
         if (response.isBlank() || response == "[]" || response == "{}") {
             Log.w("VideoStreamingWorld", "Empty response, retrying after 2s")
@@ -146,8 +159,7 @@ class FamilyPornExtractor : ExtractorApi() {
             return
         }
         val videoUrl = video.videoSource
-
-        Log.d("VideoStreamingWorld", "videoUrl = $videoUrl")
+        Log.d("VideoStreamingWorld", "✅ videoUrl = $videoUrl")
 
         callback(
             newExtractorLink(
@@ -160,7 +172,7 @@ class FamilyPornExtractor : ExtractorApi() {
         )
     }
 
-    // ----- BestWish logic -----
+    // ----- BestWish logic (with logging) -----
     private suspend fun fetchBestWish(
         url: String,
         referer: String?,
@@ -181,11 +193,13 @@ class FamilyPornExtractor : ExtractorApi() {
             "sec-ch-ua-mobile" to "?0"
         )
 
+        Log.d("BestWish", "GET $getUrl")
         var response = FamilyPorn.getText(
             url = getUrl,
             headers = headers,
             referer = url
         )
+        Log.d("BestWish", "Response (first 200 chars): ${response.take(200)}")
 
         if (response.isBlank() || response == "[]" || response == "{}") {
             Log.w("BestWish", "Empty response, retrying after 2s")
@@ -205,8 +219,7 @@ class FamilyPornExtractor : ExtractorApi() {
             return
         }
         val videoUrl = stream.streaming_url
-
-        Log.d("BestWish", "videoUrl = $videoUrl")
+        Log.d("BestWish", "✅ videoUrl = $videoUrl")
 
         callback(
             newExtractorLink(
@@ -219,7 +232,7 @@ class FamilyPornExtractor : ExtractorApi() {
         )
     }
 
-    // Data classes
+    // Data classes (same as before)
     data class FireResponse(
         @JsonProperty("securedLink") val securedlink: String? = null,
         @JsonProperty("videoSource") val videosource: String? = null
