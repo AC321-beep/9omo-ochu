@@ -6,8 +6,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 class FamilyPorn : MainAPI() {
     override var mainUrl = "https://familypornhd.com"
@@ -34,7 +32,6 @@ class FamilyPorn : MainAPI() {
             if (FamilyPornPlugin.cfCookies.contains("cf_clearance")) return
             Log.d(TAG, "CF detected, showing dialog")
             val activity = com.lagradost.cloudstream3.CommonActivity.activity ?: return
-            // Fix: use runOnUiThread instead of withContext
             activity.runOnUiThread {
                 val dialog = CloudflareWebViewDialog(
                     targetUrl = url,
@@ -42,7 +39,6 @@ class FamilyPorn : MainAPI() {
                         if (success) Log.d(TAG, "CF solved") else Log.w(TAG, "CF dialog dismissed")
                     }
                 )
-                // Fix: cast to FragmentActivity to access supportFragmentManager
                 if (activity is FragmentActivity) {
                     dialog.show(activity.supportFragmentManager, "familyporn_cf_bypass")
                 } else {
@@ -133,7 +129,6 @@ class FamilyPorn : MainAPI() {
         }
     }
 
-    // ---------- Main page ----------
     override val mainPage = mainPageOf(
         "${mainUrl}" to "All Porn Videos",
         "${mainUrl}/tag/redhead" to "Red Head",
@@ -160,7 +155,6 @@ class FamilyPorn : MainAPI() {
         )
     }
 
-    // ---------- Search ----------
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = if (page == 1) "${mainUrl}/?s=${query}" else "${mainUrl}/page/$page/?s=${query}"
         val document = getDocument(url)
@@ -168,12 +162,6 @@ class FamilyPorn : MainAPI() {
         return newSearchResponseList(results, hasNext = true)
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? {
-        val result = search(query, 1)
-        return result.search
-    }
-
-    // ---------- Load video ----------
     override suspend fun load(url: String): LoadResponse {
         val document = getDocument(url)
         val title = document.selectFirst("meta[property=og:title]")?.attr("content").orEmpty()
@@ -191,7 +179,6 @@ class FamilyPorn : MainAPI() {
         }
     }
 
-    // ---------- Load links ----------
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -209,13 +196,14 @@ class FamilyPorn : MainAPI() {
         return true
     }
 
-    // ---------- Helpers ----------
     private fun Element.toSearchResult(): SearchResponse? {
         val anchor = this.selectFirst("article a") ?: return null
         val title = anchor.attr("title")?.trim() ?: return null
         val href = fixUrl(anchor.attr("href"))
         val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("src"))
-        return newMovieSearchResponse(title, href, TvType.NSFW) { this.posterUrl = posterUrl }
+        return newMovieSearchResponse(title, href, TvType.NSFW) {
+            this.posterUrl = posterUrl
+        }
     }
 
     private fun Element.toRecommendationResult(): SearchResponse? = toSearchResult()
