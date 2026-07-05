@@ -65,7 +65,7 @@ class FamilyPorn : MainAPI() {
                 }
             }
 
-        // ---- Network functions with interceptor ----
+        // ---- Network functions using interceptor ----
         suspend fun appGet(
             url: String,
             headers: Map<String, String> = emptyMap()
@@ -193,10 +193,8 @@ class FamilyPorn : MainAPI() {
 
         return newMovieLoadResponse(title, url, type = TvType.NSFW, data = url) {
             this.posterUrl = posterUrl
-            this.posterHeaders = mapOf(
-                "Referer" to mainUrl,
-                "Cookie" to FamilyPornPlugin.cfCookies
-            )
+            // Poster headers are handled by the interceptor, but we can add fallback headers
+            this.posterHeaders = mapOf("Referer" to mainUrl)
             this.plot = description
             this.tags = tags
             this.recommendations = recommendations
