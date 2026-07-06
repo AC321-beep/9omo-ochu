@@ -26,7 +26,7 @@ import com.lagradost.api.Log
 import okhttp3.Interceptor
 import okhttp3.Response
 
-// ---- OkHttp Interceptor (unchanged) ----
+// ---- OkHttp Interceptor (injects saved cookie and UA) ----
 object CFBypassInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
@@ -91,7 +91,7 @@ class CloudflareWebViewDialog(
             val cookieStr = CookieManager.getInstance().getCookie(targetHost) ?: ""
             Log.d(TAG, "Poll [$pollElapsedMs ms] cookies: $cookieStr")
 
-            // Check for valid cf_clearance (15+ chars) – same as AniDb
+            // Check for valid cf_clearance (15+ chars)
             val cfRegex = Regex("cf_clearance=[^;]{15,}")
             if (cfRegex.containsMatchIn(cookieStr)) {
                 saveCookiesAndDismiss(cookieStr)
