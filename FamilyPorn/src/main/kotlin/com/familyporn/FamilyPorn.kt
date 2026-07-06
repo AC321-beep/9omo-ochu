@@ -81,7 +81,7 @@ class FamilyPorn : MainAPI() {
                 val solved = showCFDialogIfNeeded(url)
                 if (solved) {
                     Log.d(TAG, "CF solved, waiting 3 seconds before retry")
-                    delay(3000) // give Cloudflare time to accept the new cookie
+                    delay(3000)
                     Log.d(TAG, "Retrying with interceptor")
                     response = app.get(url, headers = headers, interceptor = CFBypassInterceptor)
                     if (isCloudflareBlocked(response)) {
@@ -215,7 +215,11 @@ class FamilyPorn : MainAPI() {
 
         return newMovieLoadResponse(title, url, type = TvType.NSFW, data = url) {
             this.posterUrl = posterUrl
-            this.posterHeaders = mapOf("Referer" to mainUrl)
+            // ✅ Add Cookie header to fix 403
+            this.posterHeaders = mapOf(
+                "Referer" to mainUrl,
+                "Cookie" to FamilyPornPlugin.cfCookies
+            )
             this.plot = description
             this.tags = tags
             this.recommendations = recommendations
@@ -265,6 +269,8 @@ class FamilyPorn : MainAPI() {
             Log.e("FamilyPorn", "No iframe or embed URL found")
             return false
         }
+
+        Log.d("FamilyPorn", "iframe src: $iframeSrc")
 
         loadExtractor(
             url = iframeSrc,
