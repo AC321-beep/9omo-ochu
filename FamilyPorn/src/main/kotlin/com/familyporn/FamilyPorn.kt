@@ -5,6 +5,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.jsoup.nodes.Document
@@ -32,17 +33,21 @@ class FamilyPorn : MainAPI() {
         )
 
         private fun isCloudflareBlocked(response: com.lagradost.nicehttp.NiceResponse): Boolean {
-            if (response.code == 403 || response.code == 503) return true
+            if (response.code == 403 || response.code == 503) {
+                Log.d(TAG, "Blocked by status code ${response.code}")
+                return true
+            }
             val text = response.text.lowercase()
             return CF_BLOCKER_PHRASES.any { text.contains(it) }
         }
 
+        // ---- CF dialog helper (exactly like AniDb) ----
         private suspend fun showCFDialogIfNeeded(url: String): Boolean =
             withContext(Dispatchers.Main) {
                 suspendCancellableCoroutine { continuation ->
                     val activity = com.lagradost.cloudstream3.CommonActivity.activity as? AppCompatActivity
                     if (activity == null || activity.isFinishing || activity.isDestroyed) {
-                        Log.e(TAG, "No activity available")
+                        Log.e(TAG, "No activity available to show CF dialog")
                         continuation.resume(false)
                         return@suspendCancellableCoroutine
                     }
@@ -64,15 +69,28 @@ class FamilyPorn : MainAPI() {
                 }
             }
 
+        // ---- Network functions using interceptor ----
         suspend fun appGet(
             url: String,
             headers: Map<String, String> = emptyMap()
         ): com.lagradost.nicehttp.NiceResponse {
+            Log.d(TAG, "appGet: $url")
             var response = app.get(url, headers = headers, interceptor = CFBypassInterceptor)
             if (isCloudflareBlocked(response)) {
+                Log.d(TAG, "CF detected, showing dialog")
                 val solved = showCFDialogIfNeeded(url)
                 if (solved) {
+                    Log.d(TAG, "CF solved, waiting 3 seconds before retry")
+                    delay(3000) // give Cloudflare time to accept the new cookie
+                    Log.d(TAG, "Retrying with interceptor")
                     response = app.get(url, headers = headers, interceptor = CFBypassInterceptor)
+                    if (isCloudflareBlocked(response)) {
+                        Log.e(TAG, "Still blocked after retry")
+                    } else {
+                        Log.d(TAG, "✅ Request succeeded after CF solve")
+                    }
+                } else {
+                    Log.w(TAG, "CF not solved, returning blocked response")
                 }
             }
             return response
@@ -83,16 +101,21 @@ class FamilyPorn : MainAPI() {
             data: Map<String, String> = emptyMap(),
             headers: Map<String, String> = emptyMap()
         ): com.lagradost.nicehttp.NiceResponse {
+            Log.d(TAG, "appPost: $url")
             var response = app.post(url, data = data, headers = headers, interceptor = CFBypassInterceptor)
             if (isCloudflareBlocked(response)) {
+                Log.d(TAG, "CF detected in POST, showing dialog")
                 val solved = showCFDialogIfNeeded(url)
                 if (solved) {
+                    Log.d(TAG, "CF solved, waiting 3 seconds before retry")
+                    delay(3000)
                     response = app.post(url, data = data, headers = headers, interceptor = CFBypassInterceptor)
                 }
             }
             return response
         }
 
+        // Public wrappers
         suspend fun getDocument(
             url: String,
             headers: Map<String, String>? = null,
@@ -161,6 +184,8 @@ class FamilyPorn : MainAPI() {
         val results = document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
         return newSearchResponseList(results, hasNext = true)
     }
+
+    // quickSearch is NOT overridden (hasQuickSearch = false)
 
     override suspend fun load(url: String): LoadResponse {
         val document = getDocument(url)
