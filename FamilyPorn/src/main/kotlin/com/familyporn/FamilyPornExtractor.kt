@@ -20,11 +20,24 @@ class FamilyPornExtractor : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
+        Log.d("FamilyPornExtractor", "⭐ getUrl called with URL: $url")
         when {
-            url.contains("watchstreamhd.com") -> fetchFireplayer(url, referer, callback)
-            url.contains("videostreamingworld.com") -> fetchVideoStreamingWorld(url, referer, callback)
-            url.contains("bestwish.lol") -> fetchBestWish(url, referer, callback)
-            else -> loadExtractor(url, referer, subtitleCallback, callback)
+            url.contains("watchstreamhd.com") -> {
+                Log.d("FamilyPornExtractor", "➡️ Using Fireplayer branch")
+                fetchFireplayer(url, referer, callback)
+            }
+            url.contains("videostreamingworld.com") -> {
+                Log.d("FamilyPornExtractor", "➡️ Using VideoStreamingWorld branch")
+                fetchVideoStreamingWorld(url, referer, callback)
+            }
+            url.contains("bestwish.lol") -> {
+                Log.d("FamilyPornExtractor", "➡️ Using BestWish branch")
+                fetchBestWish(url, referer, callback)
+            }
+            else -> {
+                Log.d("FamilyPornExtractor", "⚠️ Unknown hoster, falling back to generic loadExtractor")
+                loadExtractor(url, referer, subtitleCallback, callback)
+            }
         }
     }
 
@@ -44,7 +57,9 @@ class FamilyPornExtractor : ExtractorApi() {
             headers = headers,
             referer = url
         )
+        Log.d("Fireplayer", "POST response (first 200 chars): ${response.take(200)}")
         if (response.isBlank() || response == "[]" || response == "{}") {
+            Log.w("Fireplayer", "Empty response, retrying after 2s")
             delay(2000)
             response = FamilyPorn.postText(
                 url = posturl,
@@ -56,6 +71,7 @@ class FamilyPornExtractor : ExtractorApi() {
         val json = jacksonObjectMapper().readValue(response, FireResponse::class.java)
         val link = json.securedlink ?: json.videosource
         if (link != null) {
+            Log.d("Fireplayer", "✅ Video link: $link")
             callback(newExtractorLink(
                 source = "Fireplayer",
                 name = "Fireplayer",
@@ -65,6 +81,8 @@ class FamilyPornExtractor : ExtractorApi() {
                 this.referer = "https://watchstreamhd.com/"
                 this.headers = mapOf("Origin" to "https://watchstreamhd.com")
             })
+        } else {
+            Log.e("Fireplayer", "No video link in response")
         }
     }
 
@@ -72,11 +90,12 @@ class FamilyPornExtractor : ExtractorApi() {
         val data = url.substringAfterLast("/")
         val posturl = "https://videostreamingworld.com/player/index.php?data=$data&do=getVideo"
         val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 ...",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 OPR/120.0.0.0",
             "Accept" to "*/*",
             "X-Requested-With" to "XMLHttpRequest",
             "Referer" to url,
-            "Origin" to "https://videostreamingworld.com"
+            "Origin" to "https://videostreamingworld.com",
+            "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
         )
         var response = FamilyPorn.postText(
             url = posturl,
@@ -84,6 +103,7 @@ class FamilyPornExtractor : ExtractorApi() {
             headers = headers,
             referer = "https://videostreamingworld.com/"
         )
+        Log.d("VideoStreamingWorld", "POST response (first 200 chars): ${response.take(200)}")
         if (response.isBlank() || response == "[]" || response == "{}") {
             delay(2000)
             response = FamilyPorn.postText(
@@ -108,11 +128,14 @@ class FamilyPornExtractor : ExtractorApi() {
         val data = url.substringAfterLast("/")
         val getUrl = "https://bestwish.lol/ajax/stream?filecode=$data"
         val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 ...",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 OPR/120.0.0.0",
             "Accept" to "*/*",
+            "Accept-Language" to "en-US,en;q=0.5",
+            "Connection" to "keep-alive",
             "Referer" to url
         )
         var response = FamilyPorn.getText(url = getUrl, headers = headers, referer = url)
+        Log.d("BestWish", "GET response (first 200 chars): ${response.take(200)}")
         if (response.isBlank() || response == "[]" || response == "{}") {
             delay(2000)
             response = FamilyPorn.getText(url = getUrl, headers = headers, referer = url)
