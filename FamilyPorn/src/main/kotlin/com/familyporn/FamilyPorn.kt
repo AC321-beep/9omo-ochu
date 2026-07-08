@@ -167,7 +167,6 @@ class FamilyPorn : MainAPI() {
         return newMovieLoadResponse(title, url, type = TvType.NSFW, data = url) {
             this.posterUrl = fixUrlNull(posterUrl)
             
-            // 🔥 Grabs native cookies & adds Client Hints to fix the HTTP 403 Image Block
             val posterCookies = android.webkit.CookieManager.getInstance().getCookie(url) ?: ""
             this.posterHeaders = mapOf(
                 "Referer" to "$mainUrl/",
