@@ -69,7 +69,7 @@ class FamilyPorn : MainAPI() {
                 }
             }
 
-        suspend fun appGet(url: String, headers: Map<String, String> = emptyMap()): com.lagradost.nicehttp.NiceResponse {
+      suspend fun appGet(url: String, headers: Map<String, String> = emptyMap()): com.lagradost.nicehttp.NiceResponse {
             var response = app.get(url, headers = headers, interceptor = CFBypassInterceptor)
             if (isCloudflareBlocked(response)) {
                 cfMutex.withLock {
@@ -80,7 +80,7 @@ class FamilyPorn : MainAPI() {
 
                     val solved = showCFDialogIfNeeded(url)
                     if (solved) {
-                        delay(1500)
+                        delay(2500) // ⏳ INCREASED DELAY to allow CF servers to sync
                         return app.get(url, headers = headers, interceptor = CFBypassInterceptor)
                     }
                 }
@@ -97,7 +97,7 @@ class FamilyPorn : MainAPI() {
 
                     val solved = showCFDialogIfNeeded(url)
                     if (solved) {
-                        delay(1500)
+                        delay(2500) // ⏳ INCREASED DELAY to allow CF servers to sync
                         return app.post(url, data = data, headers = headers, interceptor = CFBypassInterceptor)
                     }
                 }
