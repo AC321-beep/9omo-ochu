@@ -18,7 +18,6 @@ object CFBypassInterceptor : Interceptor {
         builder.removeHeader("X-Requested-With")
 
         // 2. Dynamic Client Hints
-        // Match the platform hint to the User-Agent to avoid Cloudflare bot detection
         if (savedUa.contains("Android")) {
             builder.header("sec-ch-ua-mobile", "?1")
             builder.header("sec-ch-ua-platform", "\"Android\"")
@@ -50,7 +49,6 @@ object CFBypassInterceptor : Interceptor {
                     }
                 }
                 
-                // Reconstruct header without duplicates
                 val mergedCookies = cookieMap.map { "${it.key}=${it.value}" }.joinToString("; ")
                 builder.header("Cookie", mergedCookies)
             }
@@ -62,9 +60,6 @@ object CFBypassInterceptor : Interceptor {
         builder.header("Connection", "keep-alive")
         builder.header("Upgrade-Insecure-Requests", "1")
         
-        // NEVER set Accept-Encoding manually in OkHttp unless you are manually decompressing the stream.
-        // builder.removeHeader("Accept-Encoding") // Let OkHttp handle gzip/br natively.
-
         if (original.header("Referer") == null && targetHost.contains("familypornhd")) {
             builder.header("Referer", "https://familypornhd.com/")
         }
