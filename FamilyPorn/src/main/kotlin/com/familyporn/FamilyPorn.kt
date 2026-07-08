@@ -1,5 +1,6 @@
 package com.familyporn
 
+import android.net.Uri
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import com.lagradost.cloudstream3.*
@@ -91,7 +92,11 @@ class FamilyPorn : MainAPI() {
                     val retryCheck = app.post(url, data = data, headers = headers, interceptor = CFBypassInterceptor)
                     if (!isCloudflareBlocked(retryCheck)) return retryCheck
 
-                    val solved = showCFDialogIfNeeded(url)
+                    // 🔥 Deep Dive Fix: If a POST request is blocked, send the root domain to WebView, not the API endpoint.
+                    val uri = Uri.parse(url)
+                    val safeGetUrl = "${uri.scheme}://${uri.host}/"
+                    val solved = showCFDialogIfNeeded(safeGetUrl)
+                    
                     if (solved) {
                         delay(2500)
                         return app.post(url, data = data, headers = headers, interceptor = CFBypassInterceptor)
@@ -167,11 +172,14 @@ class FamilyPorn : MainAPI() {
         return newMovieLoadResponse(title, url, type = TvType.NSFW, data = url) {
             this.posterUrl = fixUrlNull(posterUrl)
             
+            // 🔥 Deep Dive Fix: Added missing `sec-ch-ua` to fix Image 403s
             val posterCookies = android.webkit.CookieManager.getInstance().getCookie(url) ?: ""
             this.posterHeaders = mapOf(
+                "Accept" to "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
                 "Referer" to "$mainUrl/",
                 "Cookie" to posterCookies,
                 "User-Agent" to FamilyPornPlugin.cfUserAgent,
+                "sec-ch-ua" to "\"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\", \"Not_A Brand\";v=\"8\"",
                 "sec-ch-ua-mobile" to if (FamilyPornPlugin.cfUserAgent.contains("Android")) "?1" else "?0",
                 "sec-ch-ua-platform" to if (FamilyPornPlugin.cfUserAgent.contains("Android")) "\"Android\"" else "\"Windows\""
             ).filterValues { it.isNotBlank() }
@@ -216,7 +224,11 @@ class FamilyPorn : MainAPI() {
             return false
         }
 
-        loadExtractor(url = iframeSrc, referer = data, subtitleCallback = subtitleCallback, callback = callback)
+        if (iframeSrc.contains("watchstreamhd") || iframeSrc.contains("videostreamingworld") || iframeSrc.contains("bestwish")) {
+            FamilyPornExtractor().getUrl(iframeSrc, data, subtitleCallback, callback)
+        } else {
+            loadExtractor(url = iframeSrc, referer = data, subtitleCallback = subtitleCallback, callback = callback)
+        }
         return true
     }
 
