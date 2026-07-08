@@ -67,8 +67,10 @@ class FamilyPornSettingsFragment : DialogFragment() {
                         val host = FamilyPornPlugin.cfCookieHost
                         if (host.isNotBlank()) {
                             CookieManager.getInstance().apply {
+                                val rootDomain = ".${host.removePrefix("www.")}"
                                 listOf("cf_clearance", "__ddg1_", "__ddg2_", "__cfruid").forEach { name ->
                                     setCookie(host, "$name=; Max-Age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT")
+                                    setCookie(host, "$name=; domain=$rootDomain; path=/; Max-Age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT")
                                 }
                                 flush()
                             }
