@@ -34,28 +34,24 @@ object CFBypassInterceptor : Interceptor {
 
         // 1. User-Agent Handling
         val savedUa = FamilyPornPlugin.cfUserAgent.takeIf { it.isNotBlank() }
-            ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ?: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
         
         builder.header("User-Agent", savedUa)
         builder.removeHeader("X-Requested-With")
+        
+        // Remove manual sec-ch-ua headers. Let OkHttp mimic the WebView naturally.
+        // Injecting them manually often contradicts the TLS fingerprint and triggers the bot-checker.
+        builder.removeHeader("sec-ch-ua-mobile")
+        builder.removeHeader("sec-ch-ua-platform")
+        builder.removeHeader("sec-ch-ua")
 
-        // 2. Dynamic Client Hints
-        if (savedUa.contains("Android")) {
-            builder.header("sec-ch-ua-mobile", "?1")
-            builder.header("sec-ch-ua-platform", "\"Android\"")
-        } else {
-            builder.header("sec-ch-ua-mobile", "?0")
-            builder.header("sec-ch-ua-platform", "\"Windows\"")
-        }
-
-        // 3. Domain-Scoped Cookies with Map Merging
+        // 2. Domain-Scoped Cookies with Map Merging
         val savedCookieHost = FamilyPornPlugin.cfCookieHost
         if (savedCookieHost.isNotBlank() && targetHost.contains(savedCookieHost.replace("www.", ""))) {
             val savedCookies = FamilyPornPlugin.cfCookies
             if (savedCookies.isNotEmpty()) {
                 val cookieMap = LinkedHashMap<String, String>()
                 
-                // Parse existing cookies
                 original.header("Cookie")?.split(";")?.forEach {
                     val parts = it.split("=", limit = 2)
                     if (parts[0].trim().isNotEmpty()) {
@@ -63,7 +59,6 @@ object CFBypassInterceptor : Interceptor {
                     }
                 }
                 
-                // Overwrite with Cloudflare cookies
                 savedCookies.split(";")?.forEach {
                     val parts = it.split("=", limit = 2)
                     if (parts[0].trim().isNotEmpty()) {
@@ -76,7 +71,7 @@ object CFBypassInterceptor : Interceptor {
             }
         }
 
-        // 4. Standard Browser Headers
+        // 3. Standard Browser Headers
         builder.header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
         builder.header("Accept-Language", "en-US,en;q=0.5")
         builder.header("Connection", "keep-alive")
@@ -152,36 +147,48 @@ class CloudflareWebViewDialog(
                 cacheMode = WebSettings.LOAD_DEFAULT
             }
             
-            // Set User-Agent logic
             if (FamilyPornPlugin.cfUserAgent.isBlank()) {
                 FamilyPornPlugin.cfUserAgent = settings.userAgentString
             } else {
                 settings.userAgentString = FamilyPornPlugin.cfUserAgent
             }
             
+            // Centralized check to prevent closing too early
+            fun checkBypassSuccess(view: WebView?, currentUrl: String?) {
+                if (isSuccessful) return
+                val urlToCheck = currentUrl ?: view?.url ?: return
+                val title = view?.title?.lowercase() ?: ""
+                val cookies = CookieManager.getInstance().getCookie(urlToCheck) ?: ""
+
+                // Only consider it bypassed if we have the cookie AND the page title is no longer a CF challenge
+                val isChallengePage = listOf("just a moment", "attention required", "cloudflare", "verify you are human").any { title.contains(it) }
+
+                if (!isChallengePage && cookies.contains("cf_clearance")) {
+                    Log.d("CloudflareWebViewDialog", "✅ CF Bypassed successfully! Title: $title")
+                    FamilyPornPlugin.cfCookies = cookies
+                    FamilyPornPlugin.cfCookieHost = Uri.parse(urlToCheck).host ?: ""
+                    
+                    isSuccessful = true
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        dismissAllowingStateLoss()
+                    }, 1000) // Give it 1 full second to execute any remaining JS redirects
+                }
+            }
+
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
                     progressBar.progress = newProgress
                     progressBar.visibility = if (newProgress == 100) View.GONE else View.VISIBLE
+                    if (newProgress == 100) {
+                        checkBypassSuccess(view, view?.url)
+                    }
                 }
             }
 
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    url?.let { currentUrl ->
-                        val cookies = CookieManager.getInstance().getCookie(currentUrl) ?: ""
-                        if (cookies.contains("cf_clearance")) {
-                            Log.d("CloudflareWebViewDialog", "✅ CF Clearance Cookie Found!")
-                            FamilyPornPlugin.cfCookies = cookies
-                            FamilyPornPlugin.cfCookieHost = Uri.parse(currentUrl).host ?: ""
-                            
-                            isSuccessful = true
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                dismissAllowingStateLoss()
-                            }, 500)
-                        }
-                    }
+                    checkBypassSuccess(view, url)
                 }
             }
         }
