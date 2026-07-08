@@ -1,86 +1,74 @@
 package com.familyporn
 
-import android.annotation.SuppressLint
-import android.app.Dialog
-import android.graphics.Color
-import android.net.Uri
-import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
-import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.TextView
-import androidx.core.graphics.toColorInt
-import com.google.android.material.bottomsheet.BottomSheetBehavior
-import com.google.android.material.bottomsheet.BottomSheetDialog
-import com.google.android.material.bottomsheet.BottomSheetDialogFragment
-import com.lagradost.api.Log
 import okhttp3.Interceptor
 import okhttp3.Response
+import com.lagradost.api.Log
 
-// ---- Enhanced OkHttp Interceptor ----
 object CFBypassInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
         val builder = original.newBuilder()
-            .removeHeader("X-Requested-With")
-            // Chrome fingerprint headers
-            .header("sec-ch-ua-mobile", "?1")
-            .header("sec-ch-ua-platform", "\"Android\"")
-            .header("sec-ch-ua", "\"Not/A)Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Opera\";v=\"120\"")
+        val targetHost = original.url.host
 
-        // User-Agent from WebView (or fallback)
-        val savedUa = FamilyPornPlugin.cfUserAgent
-        if (savedUa.isNotEmpty()) {
-            builder.header("User-Agent", savedUa)
+        // 1. User-Agent Handling
+        val savedUa = FamilyPornPlugin.cfUserAgent.takeIf { it.isNotBlank() }
+            ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        
+        builder.header("User-Agent", savedUa)
+        builder.removeHeader("X-Requested-With")
+
+        // 2. Dynamic Client Hints
+        // Match the platform hint to the User-Agent to avoid Cloudflare bot detection
+        if (savedUa.contains("Android")) {
+            builder.header("sec-ch-ua-mobile", "?1")
+            builder.header("sec-ch-ua-platform", "\"Android\"")
         } else {
-            builder.header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+            builder.header("sec-ch-ua-mobile", "?0")
+            builder.header("sec-ch-ua-platform", "\"Windows\"")
         }
 
-        // Inject saved cookie
-        val savedCookies = FamilyPornPlugin.cfCookies
-        if (savedCookies.isNotEmpty()) {
-            val existingCookie = original.header("Cookie") ?: ""
-            val base = existingCookie.split(";").map { it.trim() }
-                .filter { it.isNotEmpty() && !it.startsWith("cf_clearance=") }
-            val fresh = savedCookies.split(";").map { it.trim() }.filter { it.isNotEmpty() }
-            builder.header("Cookie", (base + fresh).distinct().joinToString("; "))
+        // 3. Domain-Scoped Cookies with Map Merging
+        val savedCookieHost = FamilyPornPlugin.cfCookieHost
+        if (savedCookieHost.isNotBlank() && targetHost.contains(savedCookieHost.replace("www.", ""))) {
+            val savedCookies = FamilyPornPlugin.cfCookies
+            if (savedCookies.isNotEmpty()) {
+                val cookieMap = LinkedHashMap<String, String>()
+                
+                // Parse existing cookies
+                original.header("Cookie")?.split(";")?.forEach {
+                    val parts = it.split("=", limit = 2)
+                    if (parts[0].trim().isNotEmpty()) {
+                        cookieMap[parts[0].trim()] = parts.getOrNull(1)?.trim() ?: ""
+                    }
+                }
+                
+                // Overwrite with Cloudflare cookies
+                savedCookies.split(";")?.forEach {
+                    val parts = it.split("=", limit = 2)
+                    if (parts[0].trim().isNotEmpty()) {
+                        cookieMap[parts[0].trim()] = parts.getOrNull(1)?.trim() ?: ""
+                    }
+                }
+                
+                // Reconstruct header without duplicates
+                val mergedCookies = cookieMap.map { "${it.key}=${it.value}" }.joinToString("; ")
+                builder.header("Cookie", mergedCookies)
+            }
         }
 
-        // Additional browser-like headers
+        // 4. Standard Browser Headers
         builder.header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-        builder.header("Accept-Language", "en-US,en;q=0.9")
-        builder.header("Accept-Encoding", "gzip, deflate, br")
+        builder.header("Accept-Language", "en-US,en;q=0.5")
         builder.header("Connection", "keep-alive")
         builder.header("Upgrade-Insecure-Requests", "1")
+        
+        // NEVER set Accept-Encoding manually in OkHttp unless you are manually decompressing the stream.
+        // builder.removeHeader("Accept-Encoding") // Let OkHttp handle gzip/br natively.
 
-        // If the original request has a Referer, keep it; otherwise set a default
-        if (original.header("Referer") == null) {
+        if (original.header("Referer") == null && targetHost.contains("familypornhd")) {
             builder.header("Referer", "https://familypornhd.com/")
         }
 
-        Log.d("CFBypassInterceptor", "🔑 Injected cookie: $savedCookies")
-        Log.d("CFBypassInterceptor", "📡 User-Agent: ${builder.build().header("User-Agent")}")
-
-        val response = chain.proceed(builder.build())
-        Log.d("CFBypassInterceptor", "📡 Response code: ${response.code} for ${original.url}")
-        return response
+        return chain.proceed(builder.build())
     }
-}
-
-// ---- WebView dialog (unchanged, already improved) ----
-class CloudflareWebViewDialog(
-    private val targetUrl: String,
-    private val onFinished: ((Boolean) -> Unit)? = null
-) : BottomSheetDialogFragment() {
-
-    // ... (the dialog code is exactly as we provided earlier – no changes needed here)
 }
