@@ -39,8 +39,7 @@ object CFBypassInterceptor : Interceptor {
         builder.header("User-Agent", savedUa)
         builder.removeHeader("X-Requested-With")
         
-        // Remove manual sec-ch-ua headers. Let OkHttp mimic the WebView naturally.
-        // Injecting them manually often contradicts the TLS fingerprint and triggers the bot-checker.
+        // Remove manual sec-ch-ua headers to prevent fingerprint contradictions
         builder.removeHeader("sec-ch-ua-mobile")
         builder.removeHeader("sec-ch-ua-platform")
         builder.removeHeader("sec-ch-ua")
@@ -153,25 +152,28 @@ class CloudflareWebViewDialog(
                 settings.userAgentString = FamilyPornPlugin.cfUserAgent
             }
             
-            // Centralized check to prevent closing too early
+            // 🔥 The Loop Fix: Verifies the challenge is actually gone before closing
             fun checkBypassSuccess(view: WebView?, currentUrl: String?) {
                 if (isSuccessful) return
                 val urlToCheck = currentUrl ?: view?.url ?: return
                 val title = view?.title?.lowercase() ?: ""
                 val cookies = CookieManager.getInstance().getCookie(urlToCheck) ?: ""
 
-                // Only consider it bypassed if we have the cookie AND the page title is no longer a CF challenge
+                // Cloudflare challenge keywords
                 val isChallengePage = listOf("just a moment", "attention required", "cloudflare", "verify you are human").any { title.contains(it) }
 
+                // We only succeed if the cookie exists AND we are off the challenge page
                 if (!isChallengePage && cookies.contains("cf_clearance")) {
                     Log.d("CloudflareWebViewDialog", "✅ CF Bypassed successfully! Title: $title")
                     FamilyPornPlugin.cfCookies = cookies
                     FamilyPornPlugin.cfCookieHost = Uri.parse(urlToCheck).host ?: ""
                     
                     isSuccessful = true
+                    
+                    // Add a 1.5-second buffer before closing to ensure background scripts finish
                     Handler(Looper.getMainLooper()).postDelayed({
-                        dismissAllowingStateLoss()
-                    }, 1000) // Give it 1 full second to execute any remaining JS redirects
+                        try { dismissAllowingStateLoss() } catch (e: Exception) { e.printStackTrace() }
+                    }, 1500)
                 }
             }
 
