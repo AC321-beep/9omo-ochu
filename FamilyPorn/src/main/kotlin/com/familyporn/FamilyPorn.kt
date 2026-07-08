@@ -69,7 +69,7 @@ class FamilyPorn : MainAPI() {
                 }
             }
 
-      suspend fun appGet(url: String, headers: Map<String, String> = emptyMap()): com.lagradost.nicehttp.NiceResponse {
+        suspend fun appGet(url: String, headers: Map<String, String> = emptyMap()): com.lagradost.nicehttp.NiceResponse {
             var response = app.get(url, headers = headers, interceptor = CFBypassInterceptor)
             if (isCloudflareBlocked(response)) {
                 cfMutex.withLock {
@@ -80,7 +80,7 @@ class FamilyPorn : MainAPI() {
 
                     val solved = showCFDialogIfNeeded(url)
                     if (solved) {
-                        delay(2500) // ⏳ INCREASED DELAY to allow CF servers to sync
+                        delay(2500)
                         return app.get(url, headers = headers, interceptor = CFBypassInterceptor)
                     }
                 }
@@ -97,7 +97,7 @@ class FamilyPorn : MainAPI() {
 
                     val solved = showCFDialogIfNeeded(url)
                     if (solved) {
-                        delay(2500) // ⏳ INCREASED DELAY to allow CF servers to sync
+                        delay(2500)
                         return app.post(url, data = data, headers = headers, interceptor = CFBypassInterceptor)
                     }
                 }
@@ -124,24 +124,15 @@ class FamilyPorn : MainAPI() {
         }
     }
 
+    // 🔥 Reduced categories to prevent Cloudflare from rate-limiting OkHttp
     override val mainPage = mainPageOf(
-        "$mainUrl" to "All Porn Videos",
-        "$mainUrl/tag/redhead" to "Red Head",
-        "$mainUrl/tag/cowgirl" to "Cowgirl",
-        "$mainUrl/tag/doggystyle" to "DoggyStyle",
-        "$mainUrl/tag/latina" to "Latina",
-        "$mainUrl/tag/milf" to "Milf",
-        "$mainUrl/tag/natural-tits" to "Natural Tits",
-        "$mainUrl/tag/stepmomporn" to "Stepmom",
-        "$mainUrl/tag/stepsisterporn" to "Step Sister",
-        "$mainUrl/tag/athletic" to "Athletic",
-        "$mainUrl/tag/asian" to "Asian",
-        "$mainUrl/tag/big-natural-tits" to "Big Natural Tits",
-        "$mainUrl/tag/big-tits" to "Big Tits"
+        "$mainUrl/" to "All Porn Videos",
+        "$mainUrl/tag/milf/" to "Milf",
+        "$mainUrl/tag/creampie/" to "Creampie"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page == 1) request.data else "${request.data}/page/$page"
+        val url = if (page == 1) request.data else "${request.data}page/$page/"
         val document = getDocument(url)
         val home = document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(
@@ -181,7 +172,6 @@ class FamilyPorn : MainAPI() {
         return newMovieLoadResponse(title, url, type = TvType.NSFW, data = url) {
             this.posterUrl = fixUrlNull(posterUrl)
             
-            // Critical setup for image loading behind CF
             this.posterHeaders = mapOf(
                 "Referer" to mainUrl,
                 "Cookie" to FamilyPornPlugin.cfCookies,
