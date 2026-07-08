@@ -1,9 +1,31 @@
 package com.familyporn
 
+import android.annotation.SuppressLint
+import android.app.Dialog
+import android.graphics.Color
+import android.net.Uri
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
+import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.bottomsheet.BottomSheetDialogFragment
+import com.lagradost.api.Log
 import okhttp3.Interceptor
 import okhttp3.Response
-import com.lagradost.api.Log
 
+// ---- Enhanced OkHttp Interceptor ----
 object CFBypassInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
@@ -65,5 +87,112 @@ object CFBypassInterceptor : Interceptor {
         }
 
         return chain.proceed(builder.build())
+    }
+}
+
+// ---- WebView dialog ----
+class CloudflareWebViewDialog(
+    private val targetUrl: String,
+    private val onFinished: ((Boolean) -> Unit)? = null
+) : BottomSheetDialogFragment() {
+
+    private var isSuccessful = false
+
+    override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
+        val dialog = super.onCreateDialog(savedInstanceState) as BottomSheetDialog
+        dialog.behavior.state = BottomSheetBehavior.STATE_EXPANDED
+        dialog.behavior.skipCollapsed = true
+        return dialog
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        val context = requireContext()
+        
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#1A1A1A"))
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        val header = TextView(context).apply {
+            text = "Bypassing Cloudflare Protection..."
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setPadding(32, 32, 32, 32)
+        }
+        layout.addView(header)
+
+        val progressBar = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                10
+            )
+        }
+        layout.addView(progressBar)
+
+        val webView = WebView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                databaseEnabled = true
+                useWideViewPort = true
+                loadWithOverviewMode = true
+                cacheMode = WebSettings.LOAD_DEFAULT
+            }
+            
+            // Set User-Agent logic
+            if (FamilyPornPlugin.cfUserAgent.isBlank()) {
+                FamilyPornPlugin.cfUserAgent = settings.userAgentString
+            } else {
+                settings.userAgentString = FamilyPornPlugin.cfUserAgent
+            }
+            
+            webChromeClient = object : WebChromeClient() {
+                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                    progressBar.progress = newProgress
+                    progressBar.visibility = if (newProgress == 100) View.GONE else View.VISIBLE
+                }
+            }
+
+            webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    url?.let { currentUrl ->
+                        val cookies = CookieManager.getInstance().getCookie(currentUrl) ?: ""
+                        if (cookies.contains("cf_clearance")) {
+                            Log.d("CloudflareWebViewDialog", "✅ CF Clearance Cookie Found!")
+                            FamilyPornPlugin.cfCookies = cookies
+                            FamilyPornPlugin.cfCookieHost = Uri.parse(currentUrl).host ?: ""
+                            
+                            isSuccessful = true
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                dismissAllowingStateLoss()
+                            }, 500)
+                        }
+                    }
+                }
+            }
+        }
+        layout.addView(webView)
+        webView.loadUrl(targetUrl)
+
+        return layout
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        onFinished?.invoke(isSuccessful)
     }
 }
