@@ -36,9 +36,7 @@ class FamilyPorn : MainAPI() {
         )
 
         private fun isCloudflareBlocked(response: com.lagradost.nicehttp.NiceResponse): Boolean {
-            if (response.code == 403 || response.code == 503) {
-                return true
-            }
+            if (response.code == 403 || response.code == 503) return true
             val text = response.text.lowercase()
             return CF_BLOCKER_PHRASES.any { text.contains(it) }
         }
@@ -74,9 +72,7 @@ class FamilyPorn : MainAPI() {
             if (isCloudflareBlocked(response)) {
                 cfMutex.withLock {
                     val retryCheck = app.get(url, headers = headers, interceptor = CFBypassInterceptor)
-                    if (!isCloudflareBlocked(retryCheck)) {
-                        return retryCheck
-                    }
+                    if (!isCloudflareBlocked(retryCheck)) return retryCheck
 
                     val solved = showCFDialogIfNeeded(url)
                     if (solved) {
@@ -124,7 +120,6 @@ class FamilyPorn : MainAPI() {
         }
     }
 
-    // 🔥 Reduced categories to prevent Cloudflare from rate-limiting OkHttp
     override val mainPage = mainPageOf(
         "$mainUrl/" to "All Porn Videos",
         "$mainUrl/tag/milf/" to "Milf",
@@ -172,10 +167,14 @@ class FamilyPorn : MainAPI() {
         return newMovieLoadResponse(title, url, type = TvType.NSFW, data = url) {
             this.posterUrl = fixUrlNull(posterUrl)
             
+            // 🔥 Grabs native cookies & adds Client Hints to fix the HTTP 403 Image Block
+            val posterCookies = android.webkit.CookieManager.getInstance().getCookie(url) ?: ""
             this.posterHeaders = mapOf(
-                "Referer" to mainUrl,
-                "Cookie" to FamilyPornPlugin.cfCookies,
-                "User-Agent" to FamilyPornPlugin.cfUserAgent
+                "Referer" to "$mainUrl/",
+                "Cookie" to posterCookies,
+                "User-Agent" to FamilyPornPlugin.cfUserAgent,
+                "sec-ch-ua-mobile" to if (FamilyPornPlugin.cfUserAgent.contains("Android")) "?1" else "?0",
+                "sec-ch-ua-platform" to if (FamilyPornPlugin.cfUserAgent.contains("Android")) "\"Android\"" else "\"Windows\""
             ).filterValues { it.isNotBlank() }
 
             this.plot = description
@@ -185,7 +184,9 @@ class FamilyPorn : MainAPI() {
     }
 
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
+        Log.d("FamilyPorn Scraper", "🔍 Scraping links for: $data")
         val document = getDocument(data)
+        
         var iframeSrc = document.selectFirst("div.embed-container iframe")?.attr("src")
             ?: document.selectFirst("div.video-wrapper iframe")?.attr("src")
             ?: document.selectFirst("iframe[src*='watchstream']")?.attr("src")
@@ -209,7 +210,13 @@ class FamilyPorn : MainAPI() {
             }
         }
 
-        if (iframeSrc.isNullOrBlank()) return false
+        Log.d("FamilyPorn Scraper", "✅ Found iframe source: $iframeSrc")
+
+        if (iframeSrc.isNullOrBlank()) {
+            Log.e("FamilyPorn Scraper", "❌ Failed to find any iframe or video source in HTML")
+            return false
+        }
+
         loadExtractor(url = iframeSrc, referer = data, subtitleCallback = subtitleCallback, callback = callback)
         return true
     }
