@@ -32,6 +32,7 @@ object CFBypassInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
         val builder = original.newBuilder()
+        val targetHost = original.url.host
 
         // 1. User-Agent Handling
         val savedUa = FamilyPornPlugin.cfUserAgent.takeIf { it.isNotBlank() }
@@ -40,25 +41,32 @@ object CFBypassInterceptor : Interceptor {
         builder.header("User-Agent", savedUa)
         builder.removeHeader("X-Requested-With")
 
-        // 2. Native CookieManager Injection (Supports infinite domains seamlessly)
-        val urlString = original.url.toString()
-        val webViewCookies = CookieManager.getInstance().getCookie(urlString)
-        
-        if (!webViewCookies.isNullOrEmpty()) {
-            val existingCookies = original.header("Cookie") ?: ""
-            val cookieMap = LinkedHashMap<String, String>()
-            
-            existingCookies.split(";").plus(webViewCookies.split(";")).forEach {
-                val parts = it.split("=", limit = 2)
-                if (parts[0].trim().isNotEmpty()) {
-                    cookieMap[parts[0].trim()] = parts.getOrNull(1)?.trim() ?: ""
+        // 2. Strict Domain Scoping (Prevents overwriting cookies on iframe hosts)
+        if (targetHost.contains("familypornhd")) {
+            val savedCookies = FamilyPornPlugin.cfCookies
+            if (savedCookies.isNotEmpty()) {
+                val existingCookies = original.header("Cookie") ?: ""
+                val cookieMap = LinkedHashMap<String, String>()
+                
+                existingCookies.split(";").plus(savedCookies.split(";")).forEach {
+                    val parts = it.split("=", limit = 2)
+                    if (parts[0].trim().isNotEmpty()) {
+                        cookieMap[parts[0].trim()] = parts.getOrNull(1)?.trim() ?: ""
+                    }
                 }
+                val mergedCookies = cookieMap.map { "${it.key}=${it.value}" }.joinToString("; ")
+                builder.header("Cookie", mergedCookies)
             }
-            val mergedCookies = cookieMap.map { "${it.key}=${it.value}" }.joinToString("; ")
-            builder.header("Cookie", mergedCookies)
         }
 
-        // 3. Strict Browser Anti-Bot Headers
+        // 3. Dynamic Injection for Iframe Hosts natively via Android's CookieManager
+        val urlString = original.url.toString()
+        val webViewCookies = CookieManager.getInstance().getCookie(urlString)
+        if (!webViewCookies.isNullOrEmpty() && !targetHost.contains("familypornhd")) {
+            builder.header("Cookie", webViewCookies)
+        }
+
+        // 4. Strict Browser Anti-Bot Headers
         builder.header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
         builder.header("Accept-Language", "en-US,en;q=0.5")
         builder.header("Connection", "keep-alive")
@@ -146,6 +154,13 @@ class CloudflareWebViewDialog(
 
                 if (!isChallengePage && cookies.contains("cf_clearance")) {
                     Log.d("CloudflareWebViewDialog", "✅ CF Bypassed successfully for ${Uri.parse(urlToCheck).host}!")
+                    
+                    // Only save global tokens for the main site. Let CookieManager handle the iframes.
+                    if (urlToCheck.contains("familypornhd")) {
+                        FamilyPornPlugin.cfCookies = cookies
+                        FamilyPornPlugin.cfCookieHost = Uri.parse(urlToCheck).host ?: ""
+                    }
+                    
                     isSuccessful = true
                     Handler(Looper.getMainLooper()).postDelayed({
                         try { dismissAllowingStateLoss() } catch (e: Exception) { e.printStackTrace() }
