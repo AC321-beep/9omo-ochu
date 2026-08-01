@@ -24,6 +24,7 @@ import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.lagradost.api.Log
+import com.lagradost.cloudstream3.CommonActivity
 import okhttp3.Interceptor
 import okhttp3.Response
 
@@ -32,41 +33,27 @@ object CFBypassInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
         val builder = original.newBuilder()
-        val targetHost = original.url.host
+        val urlString = original.url.toString()
 
-        // 1. User-Agent Handling
-        val savedUa = FamilyPornPlugin.cfUserAgent.takeIf { it.isNotBlank() }
-            ?: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        // 1. User-Agent Handling (Must match WebView exactly)
+        val defaultUa = try {
+            WebSettings.getDefaultUserAgent(CommonActivity.activity)
+        } catch (e: Exception) {
+            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        }
+        val savedUa = FamilyPornPlugin.cfUserAgent.takeIf { it.isNotBlank() } ?: defaultUa
         
         builder.header("User-Agent", savedUa)
         builder.removeHeader("X-Requested-With")
 
-        // 2. Strict Domain Scoping (Prevents overwriting cookies on iframe hosts)
-        if (targetHost.contains("familypornhd")) {
-            val savedCookies = FamilyPornPlugin.cfCookies
-            if (savedCookies.isNotEmpty()) {
-                val existingCookies = original.header("Cookie") ?: ""
-                val cookieMap = LinkedHashMap<String, String>()
-                
-                existingCookies.split(";").plus(savedCookies.split(";")).forEach {
-                    val parts = it.split("=", limit = 2)
-                    if (parts[0].trim().isNotEmpty()) {
-                        cookieMap[parts[0].trim()] = parts.getOrNull(1)?.trim() ?: ""
-                    }
-                }
-                val mergedCookies = cookieMap.map { "${it.key}=${it.value}" }.joinToString("; ")
-                builder.header("Cookie", mergedCookies)
-            }
-        }
-
-        // 3. Dynamic Injection for Iframe Hosts natively via Android's CookieManager
-        val urlString = original.url.toString()
+        // 2. Strict Cookie Handling via CookieManager
+        // Let Android handle the cookie formatting. This prevents the infinite loop.
         val webViewCookies = CookieManager.getInstance().getCookie(urlString)
-        if (!webViewCookies.isNullOrEmpty() && !targetHost.contains("familypornhd")) {
+        if (!webViewCookies.isNullOrEmpty()) {
             builder.header("Cookie", webViewCookies)
         }
 
-        // 4. Strict Browser Anti-Bot Headers
+        // 3. Strict Browser Anti-Bot Headers
         builder.header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
         builder.header("Accept-Language", "en-US,en;q=0.5")
         builder.header("Connection", "keep-alive")
@@ -136,7 +123,11 @@ class CloudflareWebViewDialog(
                 useWideViewPort = true
                 loadWithOverviewMode = true
                 cacheMode = WebSettings.LOAD_DEFAULT
+                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             }
+            
+            // Allow 3rd party cookies for Cloudflare Turnstile iframes
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             
             if (FamilyPornPlugin.cfUserAgent.isBlank()) {
                 FamilyPornPlugin.cfUserAgent = settings.userAgentString
@@ -155,7 +146,9 @@ class CloudflareWebViewDialog(
                 if (!isChallengePage && cookies.contains("cf_clearance")) {
                     Log.d("CloudflareWebViewDialog", "✅ CF Bypassed successfully for ${Uri.parse(urlToCheck).host}!")
                     
-                    // Only save global tokens for the main site. Let CookieManager handle the iframes.
+                    // Force cookies to sync to disk so the Interceptor can read them instantly
+                    CookieManager.getInstance().flush() 
+
                     if (urlToCheck.contains("familypornhd")) {
                         FamilyPornPlugin.cfCookies = cookies
                         FamilyPornPlugin.cfCookieHost = Uri.parse(urlToCheck).host ?: ""
