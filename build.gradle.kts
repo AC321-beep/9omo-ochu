@@ -1,4 +1,4 @@
-import com.android.build.gradle.BaseExtension
+import com.android.build.api.dsl.LibraryExtension
 import com.lagradost.cloudstream3.gradle.CloudstreamExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
@@ -10,9 +10,9 @@ buildscript {
         maven("https://jitpack.io")
     }
     dependencies {
-        classpath("com.android.tools.build:gradle:8.7.3")
+        classpath("com.android.tools.build:gradle:9.1.0")
         classpath("com.github.recloudstream:gradle:81b1d424d2")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.0")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10") 
     }
 }
 
@@ -24,38 +24,44 @@ allprojects {
     }
 }
 
-fun Project.cloudstream(configuration: CloudstreamExtension.() -> Unit) = extensions.getByName<CloudstreamExtension>("cloudstream").configuration()
-fun Project.android(configuration: BaseExtension.() -> Unit) = extensions.getByName<BaseExtension>("android").configuration()
+fun Project.cloudstream(configuration: CloudstreamExtension.() -> Unit) = 
+    extensions.getByName<CloudstreamExtension>("cloudstream").configuration()
+
+fun Project.android(configuration: LibraryExtension.() -> Unit) = 
+    extensions.getByName<LibraryExtension>("android").configuration()
 
 subprojects {
     apply(plugin = "com.android.library")
-    apply(plugin = "kotlin-android")
     apply(plugin = "com.lagradost.cloudstream3.gradle")
 
     cloudstream {
         setRepo(System.getenv("GITHUB_REPOSITORY") ?: "user/repo")
+        authors = listOf("megix")
     }
 
     android {
-        namespace = "com.example"
+        namespace = "com.example" // Your dynamic fallback
+        compileSdk = 36 
+        
         defaultConfig {
             minSdk = 21
-            compileSdkVersion(35)
-            targetSdk = 35
         }
         compileOptions {
             sourceCompatibility = JavaVersion.VERSION_1_8
             targetCompatibility = JavaVersion.VERSION_1_8
         }
-        tasks.withType<KotlinJvmCompile> {
-            compilerOptions {
-                jvmTarget.set(JvmTarget.JVM_1_8)
-                freeCompilerArgs.addAll(
+    }
+
+    tasks.withType<KotlinJvmCompile>().configureEach {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_1_8)
+            freeCompilerArgs.addAll(
+                listOf(
                     "-Xno-call-assertions",
                     "-Xno-param-assertions",
                     "-Xno-receiver-assertions"
                 )
-            }
+            )
         }
     }
 
@@ -65,44 +71,22 @@ subprojects {
 
         cloudstream("com.lagradost:cloudstream3:pre-release")
         implementation(kotlin("stdlib"))
-        implementation("com.github.Blatzar:NiceHttp:0.4.11")
-        implementation("org.jsoup:jsoup:1.18.3")
-        implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.13.1")
+        
+        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+        implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+        
+        implementation("com.squareup.okhttp3:okhttp:5.4.0")
+        implementation("com.github.Blatzar:NiceHttp:0.4.18")
+        implementation("org.jsoup:jsoup:1.23.1")
+        implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.22.1")
+        
+        implementation("androidx.browser:browser:1.10.0")
+        implementation("androidx.annotation:annotation:1.10.0")
+        implementation("org.mozilla:rhino:1.8.1")
     }
 }
 
-task<Delete>("clean") {
+tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
-}
-
-// ========== Auto-generate repo.json after build ==========
-tasks.register("generateRepoJson") {
-    // This avoids the configuration cache serialization error
-    notCompatibleWithConfigurationCache("This task writes a repo.json file at runtime")
-    
-    doLast {
-        val buildsDir = System.getenv("GITHUB_WORKSPACE")?.let { File(it, "builds") }
-            ?: File(rootDir, "builds")
-        buildsDir.mkdirs()
-        val repoJson = File(buildsDir, "repo.json")
-        val repoUrl = System.getenv("GITHUB_REPOSITORY") ?: "AC321-beep/9omo-ochu"
-        repoJson.writeText(
-            """
-            {
-                "name": "9omo-ochu",
-                "description": "CloudStream plugins by AC321-beep",
-                "manifestVersion": 1,
-                "pluginLists": [
-                    "https://raw.githubusercontent.com/$repoUrl/refs/heads/builds/plugins.json"
-                ]
-            }
-            """.trimIndent()
-        )
-        println("Generated $repoJson")
-    }
-}
-
-// Make it run right after makePluginsJson – so it's part of the same build command
-tasks.named("makePluginsJson") {
-    finalizedBy("generateRepoJson")
 }
