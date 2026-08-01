@@ -36,13 +36,14 @@ class FamilyPornExtractor : ExtractorApi() {
             "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
         )
         
-        var response = FamilyPorn.postText(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers, referer = url)
+        // FIX: Use raw `app.post` instead of `FamilyPorn.postText`. 
+        // This prevents 3rd-party server errors from triggering the FamilyPorn CF Dialog.
+        var response = app.post(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers, interceptor = CFBypassInterceptor).text
         if (response.isBlank() || response == "[]" || response == "{}") {
             delay(2000)
-            response = FamilyPorn.postText(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers, referer = url)
+            response = app.post(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers, interceptor = CFBypassInterceptor).text
         }
         
-        // 🔥 Deep Dive Fix: Cloudstream safe-parsing
         val json = AppUtils.parseJson<FireResponse>(response)
         val link = json.securedlink ?: json.videosource
         if (link != null) {
@@ -65,13 +66,13 @@ class FamilyPornExtractor : ExtractorApi() {
             "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
         )
         
-        var response = FamilyPorn.postText(url = posturl, data = emptyMap(), headers = headers, referer = "https://videostreamingworld.com/")
+        // FIX: Use raw `app.post`
+        var response = app.post(url = posturl, data = emptyMap(), headers = headers, interceptor = CFBypassInterceptor).text
         if (response.isBlank() || response == "[]" || response == "{}") {
             delay(2000)
-            response = FamilyPorn.postText(url = posturl, data = emptyMap(), headers = headers, referer = "https://videostreamingworld.com/")
+            response = app.post(url = posturl, data = emptyMap(), headers = headers, interceptor = CFBypassInterceptor).text
         }
         
-        // 🔥 Deep Dive Fix: Cloudstream safe-parsing
         val video = AppUtils.parseJson<Video>(response)
         callback(newExtractorLink(source = "VideoStreamingWorld", name = "VideoStreamingWorld", url = video.videoSource, type = ExtractorLinkType.M3U8) {
             this.referer = "https://videostreamingworld.com/"
@@ -89,13 +90,13 @@ class FamilyPornExtractor : ExtractorApi() {
             "Referer" to url
         )
         
-        var response = FamilyPorn.getText(url = getUrl, headers = headers, referer = url)
+        // FIX: Use raw `app.get`
+        var response = app.get(url = getUrl, headers = headers, interceptor = CFBypassInterceptor).text
         if (response.isBlank() || response == "[]" || response == "{}") {
             delay(2000)
-            response = FamilyPorn.getText(url = getUrl, headers = headers, referer = url)
+            response = app.get(url = getUrl, headers = headers, interceptor = CFBypassInterceptor).text
         }
         
-        // 🔥 Deep Dive Fix: Cloudstream safe-parsing
         val stream = AppUtils.parseJson<Stream>(response)
         callback(newExtractorLink(source = "BestWish", name = "BestWish", url = stream.streaming_url, type = ExtractorLinkType.M3U8) {
             this.referer = "https://bestwish.lol/"
