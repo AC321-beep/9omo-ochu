@@ -2,6 +2,7 @@ package com.familyporn
 
 import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.app // <-- Added missing import
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
 import kotlinx.coroutines.delay
@@ -36,8 +37,6 @@ class FamilyPornExtractor : ExtractorApi() {
             "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
         )
         
-        // FIX: Use raw `app.post` instead of `FamilyPorn.postText`. 
-        // This prevents 3rd-party server errors from triggering the FamilyPorn CF Dialog.
         var response = app.post(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers, interceptor = CFBypassInterceptor).text
         if (response.isBlank() || response == "[]" || response == "{}") {
             delay(2000)
@@ -66,11 +65,11 @@ class FamilyPornExtractor : ExtractorApi() {
             "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
         )
         
-        // FIX: Use raw `app.post`
-        var response = app.post(url = posturl, data = emptyMap(), headers = headers, interceptor = CFBypassInterceptor).text
+        // Explicitly typed emptyMap<String, String>() fixes the inference error
+        var response = app.post(url = posturl, data = emptyMap<String, String>(), headers = headers, interceptor = CFBypassInterceptor).text
         if (response.isBlank() || response == "[]" || response == "{}") {
             delay(2000)
-            response = app.post(url = posturl, data = emptyMap(), headers = headers, interceptor = CFBypassInterceptor).text
+            response = app.post(url = posturl, data = emptyMap<String, String>(), headers = headers, interceptor = CFBypassInterceptor).text
         }
         
         val video = AppUtils.parseJson<Video>(response)
@@ -90,7 +89,6 @@ class FamilyPornExtractor : ExtractorApi() {
             "Referer" to url
         )
         
-        // FIX: Use raw `app.get`
         var response = app.get(url = getUrl, headers = headers, interceptor = CFBypassInterceptor).text
         if (response.isBlank() || response == "[]" || response == "{}") {
             delay(2000)
