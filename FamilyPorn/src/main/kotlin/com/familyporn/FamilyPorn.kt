@@ -146,9 +146,9 @@ class FamilyPorn : MainAPI() {
         )
     }
 
-    // FIX: Core Cloudstream functions sometimes call search(query) instead of search(query, page)
     override suspend fun search(query: String): List<SearchResponse> {
-        return search(query, 1).toList()
+        val document = getDocument("$mainUrl/?s=$query")
+        return document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
