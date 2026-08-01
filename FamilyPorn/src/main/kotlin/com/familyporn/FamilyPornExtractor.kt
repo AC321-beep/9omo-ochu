@@ -2,7 +2,7 @@ package com.familyporn
 
 import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.app // <-- Added missing import
+import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.*
 import com.fasterxml.jackson.annotation.JsonProperty
 import kotlinx.coroutines.delay
@@ -11,6 +11,14 @@ class FamilyPornExtractor : ExtractorApi() {
     override var name = "FamilyPornExtractor"
     override var mainUrl = "https://familypornhd.com"
     override val requiresReferer = true
+
+    // FIX: Cloudstream tests and older app components call this 2-argument version.
+    // If it's missing, it throws "The operation is not implemented".
+    override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink> {
+        val links = mutableListOf<ExtractorLink>()
+        getUrl(url, referer, subtitleCallback = {}, callback = { links.add(it) })
+        return links
+    }
 
     override suspend fun getUrl(
         url: String,
@@ -65,7 +73,6 @@ class FamilyPornExtractor : ExtractorApi() {
             "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
         )
         
-        // Explicitly typed emptyMap<String, String>() fixes the inference error
         var response = app.post(url = posturl, data = emptyMap<String, String>(), headers = headers, interceptor = CFBypassInterceptor).text
         if (response.isBlank() || response == "[]" || response == "{}") {
             delay(2000)
