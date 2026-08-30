@@ -41,16 +41,13 @@ class FamilyPornSettingsFragment : DialogFragment() {
         val bypassBtn = Button(requireContext()).apply {
             text = if (FamilyPornPlugin.cfCookies.isNotBlank()) "✅ CF Cookies Saved – Refresh" else "🛡️ Bypass Cloudflare"
             setOnClickListener {
-                val dialog = CloudflareWebViewDialog(
-                    targetUrl = "https://familypornhd.com",
-                    onFinished = { saved ->
-                        if (saved) {
-                            text = "✅ CF Cookies Saved – Refresh"
-                            Toast.makeText(context, "CF cookies saved!", Toast.LENGTH_SHORT).show()
-                        }
+                val dialog = FamilyPornCFDialog("https://familypornhd.com") { saved ->
+                    if (saved) {
+                        text = "✅ CF Cookies Saved – Refresh"
+                        Toast.makeText(context, "CF cookies saved!", Toast.LENGTH_SHORT).show()
                     }
-                )
-                dialog.show(parentFragmentManager, "familyporn_cf_bypass")
+                }
+                dialog.show()
             }
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 .also { it.bottomMargin = 8 }
