@@ -3,8 +3,10 @@ package com.familyporn
 import android.net.Uri
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import kotlin.coroutines.resume
 
 class FamilyPornProvider : MainAPI() {
     override var mainUrl = "https://familypornhd.com"
@@ -14,36 +16,51 @@ class FamilyPornProvider : MainAPI() {
     override val hasQuickSearch = false
     override val supportedTypes = setOf(TvType.NSFW)
 
-    companion object Network {
-        private fun isCloudflareBlocked(response: com.lagradost.nicehttp.NiceResponse): Boolean {
-            val isErrorCode = response.code == 403 || response.code == 503
-            val text = response.text.lowercase()
-            return isErrorCode || CloudflareBypass.cfPhrases.any { text.contains(it) }
+    companion object {
+        val cfInterceptor = CFInterceptor()
+
+        // The exact coroutine suspension logic matching the Animexin pattern
+        suspend fun resolveCloudflare(url: String): Boolean = suspendCancellableCoroutine { cont ->
+            var resumed = false
+            CommonActivity.activity?.runOnUiThread {
+                val dialog = CFDialog(url) { success ->
+                    if (!resumed) {
+                        resumed = true
+                        cont.resume(success)
+                    }
+                }
+                dialog.show()
+            } ?: run {
+                if (!resumed) {
+                    resumed = true
+                    cont.resume(false)
+                }
+            }
         }
 
         suspend fun appGet(url: String, headers: Map<String, String> = emptyMap()): com.lagradost.nicehttp.NiceResponse {
-            var response = app.get(url, headers = headers, interceptor = CFBypassInterceptor)
-            if (isCloudflareBlocked(response)) {
-                val solved = CloudflareBypass.resolve(url)
-                if (solved) {
-                    return app.get(url, headers = headers, interceptor = CFBypassInterceptor) // Auto-retry
+            var response = app.get(url, headers = headers, interceptor = cfInterceptor)
+            val isChallenge = listOf("just a moment", "security verification", "attention required", "cloudflare").any { response.text.lowercase().contains(it) } || response.code in listOf(403, 503)
+            if (isChallenge) {
+                if (resolveCloudflare(url)) {
+                    response = app.get(url, headers = headers, interceptor = cfInterceptor)
                 } else {
-                    throw Error("Cloudflare bypass failed or was cancelled.")
+                    throw Error("Cloudflare bypass failed or cancelled.")
                 }
             }
             return response
         }
 
         suspend fun appPost(url: String, data: Map<String, String> = emptyMap(), headers: Map<String, String> = emptyMap()): com.lagradost.nicehttp.NiceResponse {
-            var response = app.post(url, data = data, headers = headers, interceptor = CFBypassInterceptor)
-            if (isCloudflareBlocked(response)) {
+            var response = app.post(url, data = data, headers = headers, interceptor = cfInterceptor)
+            val isChallenge = listOf("just a moment", "security verification", "attention required", "cloudflare").any { response.text.lowercase().contains(it) } || response.code in listOf(403, 503)
+            if (isChallenge) {
                 val uri = Uri.parse(url)
-                val safeGetUrl = "${uri.scheme}://${uri.host}/" // CF needs to be solved on the main host, not a POST API
-                val solved = CloudflareBypass.resolve(safeGetUrl)
-                if (solved) {
-                    return app.post(url, data = data, headers = headers, interceptor = CFBypassInterceptor) // Auto-retry
+                val safeHostUrl = "${uri.scheme}://${uri.host}/" // Solve CF on the main host, not the POST endpoint
+                if (resolveCloudflare(safeHostUrl)) {
+                    response = app.post(url, data = data, headers = headers, interceptor = cfInterceptor)
                 } else {
-                    throw Error("Cloudflare bypass failed or was cancelled.")
+                    throw Error("Cloudflare bypass failed or cancelled.")
                 }
             }
             return response
