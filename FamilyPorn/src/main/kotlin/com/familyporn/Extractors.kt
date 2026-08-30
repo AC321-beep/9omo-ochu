@@ -40,7 +40,6 @@ class FamilyPornExtractor : ExtractorApi() {
             "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
         )
         
-        // Uses the centralized safe API call
         val response = FamilyPornProvider.appPost(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers).text
         val json = AppUtils.parseJson<FireResponse>(response)
         val link = json.securedlink ?: json.videosource
