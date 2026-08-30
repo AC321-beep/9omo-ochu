@@ -1,6 +1,5 @@
 package com.familyporn
 
-import android.util.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.*
@@ -12,8 +11,8 @@ class FamilyPornExtractor : ExtractorApi() {
     override var mainUrl = "https://familypornhd.com"
     override val requiresReferer = true
 
-    // FIX: Cloudstream tests and older app components call this 2-argument version.
-    // If it's missing, it throws "The operation is not implemented".
+    private val cfInterceptor = FamilyPornInterceptor()
+
     override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink> {
         val links = mutableListOf<ExtractorLink>()
         getUrl(url, referer, subtitleCallback = {}, callback = { links.add(it) })
@@ -45,10 +44,10 @@ class FamilyPornExtractor : ExtractorApi() {
             "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
         )
         
-        var response = app.post(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers, interceptor = CFBypassInterceptor).text
+        var response = app.post(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers, interceptor = cfInterceptor).text
         if (response.isBlank() || response == "[]" || response == "{}") {
             delay(2000)
-            response = app.post(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers, interceptor = CFBypassInterceptor).text
+            response = app.post(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers, interceptor = cfInterceptor).text
         }
         
         val json = AppUtils.parseJson<FireResponse>(response)
@@ -73,10 +72,10 @@ class FamilyPornExtractor : ExtractorApi() {
             "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
         )
         
-        var response = app.post(url = posturl, data = emptyMap<String, String>(), headers = headers, interceptor = CFBypassInterceptor).text
+        var response = app.post(url = posturl, data = emptyMap<String, String>(), headers = headers, interceptor = cfInterceptor).text
         if (response.isBlank() || response == "[]" || response == "{}") {
             delay(2000)
-            response = app.post(url = posturl, data = emptyMap<String, String>(), headers = headers, interceptor = CFBypassInterceptor).text
+            response = app.post(url = posturl, data = emptyMap<String, String>(), headers = headers, interceptor = cfInterceptor).text
         }
         
         val video = AppUtils.parseJson<Video>(response)
@@ -96,10 +95,10 @@ class FamilyPornExtractor : ExtractorApi() {
             "Referer" to url
         )
         
-        var response = app.get(url = getUrl, headers = headers, interceptor = CFBypassInterceptor).text
+        var response = app.get(url = getUrl, headers = headers, interceptor = cfInterceptor).text
         if (response.isBlank() || response == "[]" || response == "{}") {
             delay(2000)
-            response = app.get(url = getUrl, headers = headers, interceptor = CFBypassInterceptor).text
+            response = app.get(url = getUrl, headers = headers, interceptor = cfInterceptor).text
         }
         
         val stream = AppUtils.parseJson<Stream>(response)
