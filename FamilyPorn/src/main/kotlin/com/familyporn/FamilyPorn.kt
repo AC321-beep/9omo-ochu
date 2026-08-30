@@ -44,8 +44,8 @@ class FamilyPorn : MainAPI() {
         }
     }
 
-    // Unified wrapper that automatically pauses your scraper, solves CF, and retries the request
-    private suspend fun <T> safeApiCall(
+    // FIXED: Removed the unused <T> generic which caused the compile error.
+    private suspend fun safeApiCall(
         url: String,
         call: suspend () -> com.lagradost.nicehttp.NiceResponse
     ): com.lagradost.nicehttp.NiceResponse {
