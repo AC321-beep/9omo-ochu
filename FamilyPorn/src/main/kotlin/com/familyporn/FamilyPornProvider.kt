@@ -37,7 +37,6 @@ class FamilyPornProvider : MainAPI() {
             }
         }
 
-        // Use global app client to avoid companion object compilation errors
         suspend fun appGet(url: String, headers: Map<String, String> = emptyMap()): com.lagradost.nicehttp.NiceResponse {
             var response = com.lagradost.cloudstream3.app.get(url, headers = headers, interceptor = cfInterceptor)
             val text = response.text.lowercase()
@@ -90,13 +89,11 @@ class FamilyPornProvider : MainAPI() {
         return newHomePageResponse(listOf(HomePageList(request.name, home, true)), hasNext = true)
     }
 
-    // FIXED: Properly separated search functions to avoid flatMap type-mismatch
     override suspend fun search(query: String): List<SearchResponse> {
         val document = getDocument("$mainUrl/?s=$query")
         return document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
     }
 
-    // FIXED: Properly return SearchResponseList for paginated search calls
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = if (page == 1) "$mainUrl/?s=$query" else "$mainUrl/page/$page/?s=$query"
         val document = getDocument(url)
@@ -142,7 +139,13 @@ class FamilyPornProvider : MainAPI() {
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
         val document = getDocument(data)
         
+        // Find iframe normally
         var iframeSrc = document.selectFirst("div.embed-container iframe, div.video-wrapper iframe, iframe[src*='watchstream'], iframe[src*='videostreamingworld'], iframe[src*='bestwish']")?.attr("src")
+
+        // Aggressive fallback to grab ANY iframe if the site layout changes
+        if (iframeSrc.isNullOrBlank()) {
+            iframeSrc = document.select("iframe").mapNotNull { it.attr("src") }.firstOrNull { it.contains("http") }
+        }
 
         if (iframeSrc.isNullOrBlank()) {
             val html = document.html()
@@ -188,7 +191,6 @@ class FamilyPornProvider : MainAPI() {
         return true
     }
 
-    // Inject Cloudflare cookies into search/grid items so CoilImgLoader doesn't throw HTTP 403
     private fun Element.toSearchResult(): SearchResponse? {
         val anchor = this.selectFirst("h3.entry-title a") ?: this.selectFirst("article a") ?: return null
         val title = anchor.text().takeIf { it.isNotBlank() } ?: anchor.attr("title").takeIf { it.isNotBlank() } ?: return null
