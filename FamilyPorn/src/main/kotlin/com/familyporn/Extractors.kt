@@ -43,10 +43,9 @@ class FamilyPornExtractor : ExtractorApi() {
         val response = FamilyPornProvider.appPost(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers).text
         val json = AppUtils.parseJson<FireResponse>(response)
         
-        // Added fallback file property just in case API shifts response structure
         val link = json.securedlink ?: json.videosource ?: json.file
         if (link != null) {
-            callback(newExtractorLink(source = "Fireplayer", name = "Fireplayer", url = link, type = ExtractorLinkType.M3U8, quality = Qualities.Unknown.value) {
+            callback(newExtractorLink(source = "Fireplayer", name = "Fireplayer", url = link, type = ExtractorLinkType.M3U8) {
                 this.referer = "https://watchstreamhd.com/"
                 this.headers = mapOf("Origin" to "https://watchstreamhd.com")
             })
@@ -69,7 +68,7 @@ class FamilyPornExtractor : ExtractorApi() {
         val video = AppUtils.parseJson<Video>(response)
         
         if (video.videoSource != null) {
-            callback(newExtractorLink(source = "VideoStreamingWorld", name = "VideoStreamingWorld", url = video.videoSource, type = ExtractorLinkType.M3U8, quality = Qualities.Unknown.value) {
+            callback(newExtractorLink(source = "VideoStreamingWorld", name = "VideoStreamingWorld", url = video.videoSource, type = ExtractorLinkType.M3U8) {
                 this.referer = "https://videostreamingworld.com/"
             })
         }
@@ -90,13 +89,12 @@ class FamilyPornExtractor : ExtractorApi() {
         val stream = AppUtils.parseJson<Stream>(response)
         
         if (stream.streaming_url != null) {
-            callback(newExtractorLink(source = "BestWish", name = "BestWish", url = stream.streaming_url, type = ExtractorLinkType.M3U8, quality = Qualities.Unknown.value) {
+            callback(newExtractorLink(source = "BestWish", name = "BestWish", url = stream.streaming_url, type = ExtractorLinkType.M3U8) {
                 this.referer = "https://bestwish.lol/"
             })
         }
     }
 
-    // @JsonProperty completely guards data classes against Release APK Obfuscation bugs
     data class FireResponse(
         @JsonProperty("securedLink") val securedlink: String? = null,
         @JsonProperty("videoSource") val videosource: String? = null,
