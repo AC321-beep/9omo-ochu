@@ -1,14 +1,14 @@
 package com.familyporn
 
 import android.webkit.CookieManager
-import android.webkit.WebSettings
-import com.lagradost.cloudstream3.CommonActivity
 import okhttp3.Interceptor
 import okhttp3.Response
 
 // Global State to synchronize WebView and OkHttp Fingerprints across the entire extension
 object CFState {
-    var userAgent: String = ""
+    // Hardcoded to prevent RuntimeExceptions on OkHttp background threads. 
+    // Matching User-Agent is strictly required for Cloudflare clearance.
+    var userAgent: String = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 }
 
 class CFInterceptor : Interceptor {
@@ -17,9 +17,7 @@ class CFInterceptor : Interceptor {
         val builder = original.newBuilder()
 
         // Match the WebView's exact User-Agent
-        val defaultUa = try { WebSettings.getDefaultUserAgent(CommonActivity.activity) } catch(e: Exception) { "Mozilla/5.0" }
-        val ua = CFState.userAgent.takeIf { it.isNotBlank() } ?: defaultUa
-        builder.header("User-Agent", ua)
+        builder.header("User-Agent", CFState.userAgent)
         
         // Prevent Android from leaking app package name to Cloudflare WAF
         builder.removeHeader("X-Requested-With")
