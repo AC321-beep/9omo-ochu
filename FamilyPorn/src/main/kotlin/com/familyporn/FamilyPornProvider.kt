@@ -37,6 +37,7 @@ class FamilyPornProvider : MainAPI() {
             }
         }
 
+        // Use global app client to avoid companion object compilation errors
         suspend fun appGet(url: String, headers: Map<String, String> = emptyMap()): com.lagradost.nicehttp.NiceResponse {
             var response = com.lagradost.cloudstream3.app.get(url, headers = headers, interceptor = cfInterceptor)
             val text = response.text.lowercase()
@@ -89,7 +90,10 @@ class FamilyPornProvider : MainAPI() {
         return newHomePageResponse(listOf(HomePageList(request.name, home, true)), hasNext = true)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> = search(query, 1).flatMap { it }
+    // FlatMap compilation error fixed here
+    override suspend fun search(query: String): List<SearchResponse> {
+        return search(query, 1)
+    }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = if (page == 1) "$mainUrl/?s=$query" else "$mainUrl/page/$page/?s=$query"
@@ -159,6 +163,7 @@ class FamilyPornProvider : MainAPI() {
         if (iframeSrc.isNullOrBlank()) return false
         iframeSrc = fixUrl(iframeSrc)
 
+        // Quality parameter removed to fix compilation errors
         if (iframeSrc.contains(".m3u8") || iframeSrc.contains(".mp4")) {
             val isM3u8 = iframeSrc.contains(".m3u8")
             callback(
@@ -182,7 +187,7 @@ class FamilyPornProvider : MainAPI() {
         return true
     }
 
-    // FIXED: Inject Cloudflare cookies into search/grid items so CoilImgLoader doesn't 403
+    // Inject Cloudflare cookies into search/grid items so CoilImgLoader doesn't throw HTTP 403
     private fun Element.toSearchResult(): SearchResponse? {
         val anchor = this.selectFirst("h3.entry-title a") ?: this.selectFirst("article a") ?: return null
         val title = anchor.text().takeIf { it.isNotBlank() } ?: anchor.attr("title").takeIf { it.isNotBlank() } ?: return null
