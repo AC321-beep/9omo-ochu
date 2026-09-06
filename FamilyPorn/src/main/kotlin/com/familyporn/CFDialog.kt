@@ -30,7 +30,7 @@ class CFDialog(private val url: String, private val onResult: (Boolean) -> Unit)
             return
         }
 
-        dialog = Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        dialog = Dialog(activity)
         
         val layout = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -60,10 +60,16 @@ class CFDialog(private val url: String, private val onResult: (Boolean) -> Unit)
                 loadWithOverviewMode = true
                 cacheMode = WebSettings.LOAD_DEFAULT
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                userAgentString = CFState.userAgent
             }
 
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+
+            // RESTORED: Dynamically sync the WebView's authentic User-Agent
+            if (CFState.userAgent.isBlank()) {
+                CFState.userAgent = settings.userAgentString
+            } else {
+                settings.userAgentString = CFState.userAgent
+            }
 
             fun checkSuccess(view: WebView?) {
                 if (isResolved) return
