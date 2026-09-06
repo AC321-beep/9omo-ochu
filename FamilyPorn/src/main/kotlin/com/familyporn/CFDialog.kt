@@ -11,8 +11,6 @@ import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -66,7 +64,6 @@ class CFDialog(private val url: String, private val onResult: (Boolean) -> Unit)
 
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
-            // Dynamically sync the authentic WebView User-Agent for OkHttp
             if (CFState.userAgent.isBlank()) {
                 CFState.userAgent = settings.userAgentString
             } else {
@@ -105,29 +102,7 @@ class CFDialog(private val url: String, private val onResult: (Boolean) -> Unit)
                 override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
                     handler?.proceed()
                 }
-
-                // BLOCK REDIRECTS: Force the WebView to stay on the target site or Cloudflare
-                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                    val reqUrl = request?.url?.toString() ?: return false
-                    val targetHost = android.net.Uri.parse(url).host ?: ""
-                    
-                    if (reqUrl.contains(targetHost) || reqUrl.contains("cloudflare")) {
-                        return false // Allow navigation
-                    }
-                    return true // Block all popunders and redirects
-                }
-
-                // BLOCK AD RESOURCES: Stop ad scripts from loading to prevent white screen crashes
-                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                    val reqUrl = request?.url?.toString() ?: ""
-                    val blockedDomains = listOf("phonydepth.com", "osbhitftyhu.in", "wpadmngr.com", "google-analytics", "detoxifylagoonsnugness")
-                    
-                    if (blockedDomains.any { reqUrl.contains(it) }) {
-                        return WebResourceResponse("text/plain", "UTF-8", null)
-                    }
-                    return super.shouldInterceptRequest(view, request)
-                }
-
+                
                 override fun onPageFinished(view: WebView?, url: String?) {
                     checkSuccess(view)
                 }
