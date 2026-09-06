@@ -1,6 +1,8 @@
 package com.familyporn
 
 import android.net.Uri
+import android.webkit.CookieManager
+import android.webkit.WebSettings
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -43,7 +45,11 @@ class FamilyPornProvider : MainAPI() {
             
             val isChallenge = response.code in listOf(403, 503) && (text.contains("cloudflare") || text.contains("just a moment"))
             if (isChallenge) {
-                if (resolveCloudflare(url)) {
+                // FORCE ROOT DOMAIN: Bypasses video player popunders so captcha can be clicked safely
+                val uri = Uri.parse(url)
+                val safeHostUrl = "${uri.scheme}://${uri.host}/" 
+                
+                if (resolveCloudflare(safeHostUrl)) {
                     response = com.lagradost.cloudstream3.app.get(url, headers = headers, interceptor = cfInterceptor)
                 } else {
                     throw Error("Cloudflare bypass failed or cancelled.")
@@ -58,8 +64,10 @@ class FamilyPornProvider : MainAPI() {
             
             val isChallenge = response.code in listOf(403, 503) && (text.contains("cloudflare") || text.contains("just a moment"))
             if (isChallenge) {
+                // FORCE ROOT DOMAIN
                 val uri = Uri.parse(url)
                 val safeHostUrl = "${uri.scheme}://${uri.host}/" 
+                
                 if (resolveCloudflare(safeHostUrl)) {
                     response = com.lagradost.cloudstream3.app.post(url, data = data, headers = headers, interceptor = cfInterceptor)
                 } else {
@@ -122,12 +130,17 @@ class FamilyPornProvider : MainAPI() {
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = fixUrlNull(posterUrl)
             
-            val posterCookies = android.webkit.CookieManager.getInstance().getCookie(url) ?: ""
+            val cookies = CookieManager.getInstance().getCookie(url) ?: ""
+            val ua = CFState.userAgent.takeIf { it.isNotBlank() } ?: try { WebSettings.getDefaultUserAgent(CommonActivity.activity) } catch(e: Exception) { "Mozilla/5.0" }
+            
             this.posterHeaders = mapOf(
                 "Accept" to "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
                 "Referer" to "$mainUrl/",
-                "Cookie" to posterCookies,
-                "User-Agent" to CFState.userAgent
+                "Cookie" to cookies,
+                "User-Agent" to ua,
+                "Sec-Fetch-Dest" to "image",
+                "Sec-Fetch-Mode" to "no-cors",
+                "Sec-Fetch-Site" to "same-origin"
             ).filterValues { it.isNotBlank() }
 
             this.plot = description
@@ -139,10 +152,8 @@ class FamilyPornProvider : MainAPI() {
     override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
         val document = getDocument(data)
         
-        // Find iframe normally
         var iframeSrc = document.selectFirst("div.embed-container iframe, div.video-wrapper iframe, iframe[src*='watchstream'], iframe[src*='videostreamingworld'], iframe[src*='bestwish']")?.attr("src")
 
-        // Aggressive fallback to grab ANY iframe if the site layout changes
         if (iframeSrc.isNullOrBlank()) {
             iframeSrc = document.select("iframe").mapNotNull { it.attr("src") }.firstOrNull { it.contains("http") }
         }
@@ -199,12 +210,17 @@ class FamilyPornProvider : MainAPI() {
         
         return newMovieSearchResponse(title, href, TvType.NSFW) { 
             this.posterUrl = posterUrl 
-            val cookies = android.webkit.CookieManager.getInstance().getCookie(mainUrl) ?: ""
+            val cookies = CookieManager.getInstance().getCookie(mainUrl) ?: ""
+            val ua = CFState.userAgent.takeIf { it.isNotBlank() } ?: try { WebSettings.getDefaultUserAgent(CommonActivity.activity) } catch(e: Exception) { "Mozilla/5.0" }
+            
             this.posterHeaders = mapOf(
                 "Accept" to "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
                 "Referer" to "$mainUrl/",
                 "Cookie" to cookies,
-                "User-Agent" to CFState.userAgent
+                "User-Agent" to ua,
+                "Sec-Fetch-Dest" to "image",
+                "Sec-Fetch-Mode" to "no-cors",
+                "Sec-Fetch-Site" to "same-origin"
             ).filterValues { it.isNotBlank() }
         }
     }
