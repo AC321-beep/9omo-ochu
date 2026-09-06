@@ -1,12 +1,12 @@
 package com.familyporn
 
+import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import com.lagradost.cloudstream3.CommonActivity
 import okhttp3.Interceptor
 import okhttp3.Response
 
-// RESTORED: Empty string to wait for authentic Android WebView User-Agent
 object CFState {
     var userAgent: String = ""
 }
@@ -16,15 +16,12 @@ class CFInterceptor : Interceptor {
         val original = chain.request()
         val builder = original.newBuilder()
 
-        // RESTORED: Try-catch block perfectly matches the authentic UA to pass fingerprinting
         val defaultUa = try { WebSettings.getDefaultUserAgent(CommonActivity.activity) } catch(e: Exception) { "Mozilla/5.0" }
         val ua = CFState.userAgent.takeIf { it.isNotBlank() } ?: defaultUa
         builder.header("User-Agent", ua)
         
-        // Prevent Android from leaking app package name to Cloudflare WAF
         builder.removeHeader("X-Requested-With")
 
-        // Dynamically inject the clearance cookies solved by the WebView Dialog
         val cookies = CookieManager.getInstance().getCookie(original.url.toString())
         if (!cookies.isNullOrEmpty()) {
             builder.header("Cookie", cookies)
@@ -38,6 +35,10 @@ class CFInterceptor : Interceptor {
         builder.header("Sec-Fetch-Mode", "navigate")
         builder.header("Sec-Fetch-Site", "same-origin")
 
-        return chain.proceed(builder.build())
+        Log.d("CF_DEBUG_NET", "Interceptor executing request for: ${original.url}")
+        val response = chain.proceed(builder.build())
+        Log.d("CF_DEBUG_NET", "Interceptor received Code ${response.code} for: ${original.url}")
+
+        return response
     }
 }
