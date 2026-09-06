@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.CommonActivity
 import okhttp3.Interceptor
 import okhttp3.Response
 
-// Global State to synchronize WebView and OkHttp Fingerprints across the entire extension
 object CFState {
     var userAgent: String = ""
 }
@@ -16,15 +15,12 @@ class CFInterceptor : Interceptor {
         val original = chain.request()
         val builder = original.newBuilder()
 
-        // Try-catch block safely retrieves the default Android WebView UA on background threads
         val defaultUa = try { WebSettings.getDefaultUserAgent(CommonActivity.activity) } catch(e: Exception) { "Mozilla/5.0" }
         val ua = CFState.userAgent.takeIf { it.isNotBlank() } ?: defaultUa
         builder.header("User-Agent", ua)
         
-        // Prevent Android from leaking app package name to Cloudflare WAF
         builder.removeHeader("X-Requested-With")
 
-        // Dynamically inject the clearance cookies solved by the WebView Dialog
         val cookies = CookieManager.getInstance().getCookie(original.url.toString())
         if (!cookies.isNullOrEmpty()) {
             builder.header("Cookie", cookies)
