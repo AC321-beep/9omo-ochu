@@ -66,6 +66,7 @@ class CFDialog(private val url: String, private val onResult: (Boolean) -> Unit)
 
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
+            // Dynamically sync the authentic WebView User-Agent for OkHttp
             if (CFState.userAgent.isBlank()) {
                 CFState.userAgent = settings.userAgentString
             } else {
@@ -105,7 +106,7 @@ class CFDialog(private val url: String, private val onResult: (Boolean) -> Unit)
                     handler?.proceed()
                 }
 
-                // 1. BLOCK REDIRECTS: Force the WebView to stay on the target site or Cloudflare
+                // BLOCK REDIRECTS: Force the WebView to stay on the target site or Cloudflare
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                     val reqUrl = request?.url?.toString() ?: return false
                     val targetHost = android.net.Uri.parse(url).host ?: ""
@@ -116,7 +117,7 @@ class CFDialog(private val url: String, private val onResult: (Boolean) -> Unit)
                     return true // Block all popunders and redirects
                 }
 
-                // 2. BLOCK AD RESOURCES: Stop ad scripts from even loading
+                // BLOCK AD RESOURCES: Stop ad scripts from loading to prevent white screen crashes
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                     val reqUrl = request?.url?.toString() ?: ""
                     val blockedDomains = listOf("phonydepth.com", "osbhitftyhu.in", "wpadmngr.com", "google-analytics", "detoxifylagoonsnugness")
