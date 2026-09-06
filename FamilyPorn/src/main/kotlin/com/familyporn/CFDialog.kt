@@ -6,11 +6,16 @@ import android.graphics.Color
 import android.net.http.SslError
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -29,6 +34,8 @@ class CFDialog(private val url: String, private val onResult: (Boolean) -> Unit)
             onResult(false)
             return
         }
+
+        Log.d("CF_DEBUG", "Opening CFDialog for URL: $url")
 
         dialog = Dialog(activity)
         
@@ -64,12 +71,12 @@ class CFDialog(private val url: String, private val onResult: (Boolean) -> Unit)
 
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
 
-            // RESTORED: Dynamically sync the WebView's authentic User-Agent
             if (CFState.userAgent.isBlank()) {
                 CFState.userAgent = settings.userAgentString
             } else {
                 settings.userAgentString = CFState.userAgent
             }
+            Log.d("CF_DEBUG", "WebView User-Agent set to: ${settings.userAgentString}")
 
             fun checkSuccess(view: WebView?) {
                 if (isResolved) return
@@ -80,6 +87,7 @@ class CFDialog(private val url: String, private val onResult: (Boolean) -> Unit)
                 val isChallenge = listOf("just a moment", "attention required", "security verification", "cloudflare").any { title.contains(it) }
 
                 if (!isChallenge && cookies.contains("cf_clearance")) {
+                    Log.d("CF_DEBUG", "Bypass SUCCESS. Cookies found: $cookies")
                     isResolved = true
                     CookieManager.getInstance().flush()
                     header.text = "Success! Resuming..."
@@ -96,15 +104,38 @@ class CFDialog(private val url: String, private val onResult: (Boolean) -> Unit)
                     progressBar.visibility = if (newProgress == 100) View.GONE else View.VISIBLE
                     if (newProgress == 100) checkSuccess(view)
                 }
+
+                override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                    Log.d("CF_DEBUG_JS", "JS Console: ${consoleMessage?.message()} -- Line ${consoleMessage?.lineNumber()} of ${consoleMessage?.sourceId()}")
+                    return super.onConsoleMessage(consoleMessage)
+                }
             }
 
             webViewClient = object : WebViewClient() {
                 @SuppressLint("WebViewClientOnReceivedSslError")
                 override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
+                    Log.e("CF_DEBUG", "SSL Error: $error")
                     handler?.proceed()
                 }
+
+                override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                    Log.d("CF_DEBUG", "Page Started Loading: $url")
+                    super.onPageStarted(view, url, favicon)
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
+                    Log.d("CF_DEBUG", "Page Finished Loading: $url | Title: ${view?.title}")
                     checkSuccess(view)
+                }
+
+                override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                    Log.e("CF_DEBUG", "WebView Render Error: ${error?.description} for URL: ${request?.url}")
+                    super.onReceivedError(view, request, error)
+                }
+
+                override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
+                    Log.e("CF_DEBUG", "WebView HTTP Error: Code ${errorResponse?.statusCode} for URL: ${request?.url}")
+                    super.onReceivedHttpError(view, request, errorResponse)
                 }
             }
         }
@@ -114,6 +145,7 @@ class CFDialog(private val url: String, private val onResult: (Boolean) -> Unit)
         dialog?.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         
         dialog?.setOnDismissListener {
+            Log.d("CF_DEBUG", "Dialog Dismissed. isResolved = $isResolved")
             if (!isResolved) {
                 isResolved = true
                 onResult(false)
