@@ -45,7 +45,6 @@ class FamilyPornProvider : MainAPI() {
             
             val isChallenge = response.code in listOf(403, 503) && (text.contains("cloudflare") || text.contains("just a moment"))
             if (isChallenge) {
-                // FORCE ROOT DOMAIN: Bypasses video player popunders so captcha can be clicked safely
                 val uri = Uri.parse(url)
                 val safeHostUrl = "${uri.scheme}://${uri.host}/" 
                 
@@ -64,7 +63,6 @@ class FamilyPornProvider : MainAPI() {
             
             val isChallenge = response.code in listOf(403, 503) && (text.contains("cloudflare") || text.contains("just a moment"))
             if (isChallenge) {
-                // FORCE ROOT DOMAIN
                 val uri = Uri.parse(url)
                 val safeHostUrl = "${uri.scheme}://${uri.host}/" 
                 
