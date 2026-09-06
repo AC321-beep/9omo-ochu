@@ -90,10 +90,13 @@ class FamilyPornProvider : MainAPI() {
         return newHomePageResponse(listOf(HomePageList(request.name, home, true)), hasNext = true)
     }
 
+    // FIXED: Properly separated search functions to avoid flatMap type-mismatch
     override suspend fun search(query: String): List<SearchResponse> {
-        return search(query, 1)
+        val document = getDocument("$mainUrl/?s=$query")
+        return document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
     }
 
+    // FIXED: Properly return SearchResponseList for paginated search calls
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = if (page == 1) "$mainUrl/?s=$query" else "$mainUrl/page/$page/?s=$query"
         val document = getDocument(url)
