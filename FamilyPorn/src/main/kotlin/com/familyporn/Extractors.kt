@@ -36,17 +36,54 @@ class FamilyPornExtractor : ExtractorApi() {
         val videoid = url.trimEnd('/').substringAfterLast("/").substringBefore("?")
 
         try {
-            // Replicate standard browser initialization headers for FirePlayer
-            val initialHeaders = mapOf(
-                "User-Agent" to CFState.userAgent,
+            // 1. Initialize session on the host iframe wrapper
+            val iframeHtml = FamilyPornProvider.appGet(url, headers = mapOf(
                 "Referer" to (referer ?: "https://familypornhd.com/"),
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-            )
+                "User-Agent" to CFState.userAgent
+            )).text
 
-            // Step 1: Initialize session on the host iframe
-            FamilyPornProvider.appGet(url, headers = initialHeaders)
+            // 2. Fetch FirePlayer's actual configuration asset script
+            val scriptUrl = "https://$host/player/assets/scripts.php?v=6"
+            val scriptText = try {
+                FamilyPornProvider.appGet(scriptUrl, headers = mapOf(
+                    "Referer" to url,
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "User-Agent" to CFState.userAgent
+                )).text
+            } catch (e: Exception) { "" }
 
-            // Step 2: Target the FirePlayer backend router endpoint (standard for FireVideoPlayer scripts)
+            val combinedSource = iframeHtml + "\n" + scriptText
+
+            // 3. Extract direct .m3u8 or .mp4 files dynamically declared in the player scope
+            val linkRegex = Regex("""["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""", RegexOption.IGNORE_CASE)
+            var found = false
+
+            for (match in linkRegex.findAll(combinedSource)) {
+                val link = match.groupValues[1]
+                if (link.contains("jquery") || link.contains("bootstrap") || link.contains("loading")) continue
+
+                found = true
+                val isM3u8 = link.contains(".m3u8")
+                callback(
+                    newExtractorLink(
+                        source = "FirePlayer",
+                        name = "FirePlayer",
+                        url = link,
+                        type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = url
+                        this.headers = mapOf(
+                            "Origin" to "https://$host",
+                            "Referer" to url,
+                            "User-Agent" to CFState.userAgent
+                        )
+                    }
+                )
+            }
+
+            if (found) return
+
+            // 4. Fallback to FirePlayer backend API router (`do=getVideo`)
             val postUrl = "https://$host/player/index.php?data=$videoid&do=getVideo"
             val postHeaders = mapOf(
                 "Accept" to "application/json, text/javascript, */*; q=0.01",
@@ -63,16 +100,15 @@ class FamilyPornExtractor : ExtractorApi() {
                 headers = postHeaders
             ).text
 
-            // Step 3: Parse response safely handling schema variations
-            val json = AppUtils.parseJson<FirePlayerResponse>(apiResponseText)
+            val json = AppUtils.parseJson<MasterResponse>(apiResponseText)
             val streamUrl = json.securedlink ?: json.videosource ?: json.file ?: json.videoSource ?: json.streamingUrl
 
             if (!streamUrl.isNullOrBlank()) {
-                val isM3u8 = streamUrl.contains(".m3u8") || streamUrl.contains("m3u8")
+                val isM3u8 = streamUrl.contains(".m3u8")
                 callback(
                     newExtractorLink(
                         source = "FirePlayer",
-                        name = "FirePlayer",
+                        name = "FirePlayer (API)",
                         url = streamUrl,
                         type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     ) {
@@ -84,34 +120,14 @@ class FamilyPornExtractor : ExtractorApi() {
                         )
                     }
                 )
-            } else {
-                // Fallback: Regex scan if JSON properties are obfuscated or empty
-                val fallbackRegex = Regex("""["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""", RegexOption.IGNORE_CASE)
-                for (match in fallbackRegex.findAll(apiResponseText)) {
-                    val link = match.groupValues[1]
-                    if (link.contains("jquery") || link.contains("logo")) continue
-                    val isM3u8 = link.contains(".m3u8")
-                    callback(
-                        newExtractorLink(
-                            source = "FirePlayer",
-                            name = "FirePlayer (Direct)",
-                            url = link,
-                            type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = url
-                            this.headers = mapOf("Origin" to "https://$host")
-                        }
-                    )
-                    break
-                }
             }
 
         } catch (e: Exception) {
-            Log.e("FamilyPorn", "FirePlayer resolution failed: ${e.message}")
+            Log.e("FamilyPorn", "FirePlayer resolution error: ${e.message}")
         }
     }
 
-    data class FirePlayerResponse(
+    data class MasterResponse(
         @JsonProperty("securedLink") val securedlink: String? = null,
         @JsonProperty("videoSource") val videosource: String? = null,
         @JsonProperty("video_source") val videoSource: String? = null,
