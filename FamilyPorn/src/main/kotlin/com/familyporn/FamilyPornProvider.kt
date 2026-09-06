@@ -19,7 +19,6 @@ class FamilyPornProvider : MainAPI() {
     companion object {
         val cfInterceptor = CFInterceptor()
 
-        // The exact coroutine suspension logic matching the Animexin pattern
         suspend fun resolveCloudflare(url: String): Boolean = suspendCancellableCoroutine { cont ->
             var resumed = false
             CommonActivity.activity?.runOnUiThread {
@@ -39,11 +38,13 @@ class FamilyPornProvider : MainAPI() {
         }
 
         suspend fun appGet(url: String, headers: Map<String, String> = emptyMap()): com.lagradost.nicehttp.NiceResponse {
-            var response = app.get(url, headers = headers, interceptor = cfInterceptor)
-            val isChallenge = listOf("just a moment", "security verification", "attention required", "cloudflare").any { response.text.lowercase().contains(it) } || response.code in listOf(403, 503)
+            var response = com.lagradost.cloudstream3.app.get(url, headers = headers, interceptor = cfInterceptor)
+            val text = response.text.lowercase()
+            
+            val isChallenge = response.code in listOf(403, 503) && (text.contains("cloudflare") || text.contains("just a moment"))
             if (isChallenge) {
                 if (resolveCloudflare(url)) {
-                    response = app.get(url, headers = headers, interceptor = cfInterceptor)
+                    response = com.lagradost.cloudstream3.app.get(url, headers = headers, interceptor = cfInterceptor)
                 } else {
                     throw Error("Cloudflare bypass failed or cancelled.")
                 }
@@ -52,13 +53,15 @@ class FamilyPornProvider : MainAPI() {
         }
 
         suspend fun appPost(url: String, data: Map<String, String> = emptyMap(), headers: Map<String, String> = emptyMap()): com.lagradost.nicehttp.NiceResponse {
-            var response = app.post(url, data = data, headers = headers, interceptor = cfInterceptor)
-            val isChallenge = listOf("just a moment", "security verification", "attention required", "cloudflare").any { response.text.lowercase().contains(it) } || response.code in listOf(403, 503)
+            var response = com.lagradost.cloudstream3.app.post(url, data = data, headers = headers, interceptor = cfInterceptor)
+            val text = response.text.lowercase()
+            
+            val isChallenge = response.code in listOf(403, 503) && (text.contains("cloudflare") || text.contains("just a moment"))
             if (isChallenge) {
                 val uri = Uri.parse(url)
-                val safeHostUrl = "${uri.scheme}://${uri.host}/" // Solve CF on the main host, not the POST endpoint
+                val safeHostUrl = "${uri.scheme}://${uri.host}/" 
                 if (resolveCloudflare(safeHostUrl)) {
-                    response = app.post(url, data = data, headers = headers, interceptor = cfInterceptor)
+                    response = com.lagradost.cloudstream3.app.post(url, data = data, headers = headers, interceptor = cfInterceptor)
                 } else {
                     throw Error("Cloudflare bypass failed or cancelled.")
                 }
@@ -83,13 +86,10 @@ class FamilyPornProvider : MainAPI() {
         val url = if (page == 1) request.data else "${request.data}page/$page/"
         val document = getDocument(url)
         val home = document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
-        return newHomePageResponse(HomePageList(request.name, home, true), hasNext = true)
+        return newHomePageResponse(listOf(HomePageList(request.name, home, true)), hasNext = true)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val document = getDocument("$mainUrl/?s=$query")
-        return document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
-    }
+    override suspend fun search(query: String): List<SearchResponse> = search(query, 1).flatMap { it }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = if (page == 1) "$mainUrl/?s=$query" else "$mainUrl/page/$page/?s=$query"
@@ -101,16 +101,20 @@ class FamilyPornProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val document = getDocument(url)
 
-        val title = document.selectFirst("meta[property=og:title]")?.attr("content")
-            ?: document.selectFirst("h1")?.text() ?: "Unknown Title"
-        val description = document.selectFirst("meta[property=og:description]")?.attr("content") ?: ""
-        val tags = document.select("p.entry-tags a").map { it.text().lowercase() }.take(5)
-
+        val title = document.selectFirst("h1.entry-title")?.text() 
+            ?: document.selectFirst("meta[property=og:title]")?.attr("content")?.substringBefore(" - ")
+            ?: "Unknown Title"
+            
+        val description = document.select("div.entry-content p").text().trim().takeIf { it.isNotBlank() } 
+            ?: document.selectFirst("meta[property=og:description]")?.attr("content") ?: ""
+            
+        val tags = document.select("p.entry-tags a").map { it.text().lowercase() }
+        
         val posterUrl = document.selectFirst("meta[property=og:image]")?.attr("content")
             ?: document.selectFirst("div.entry-content img")?.attr("src")
 
-        val recommendations = document.select("aside.g1-related-entries div.g1-collection li")
-            .mapNotNull { it.toRecommendationResult() }
+        val recommendations = document.select("aside.g1-related-entries li.g1-collection-item, aside.g1-more-from li.g1-collection-item")
+            .mapNotNull { it.toSearchResult() }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = fixUrlNull(posterUrl)
@@ -137,9 +141,10 @@ class FamilyPornProvider : MainAPI() {
         if (iframeSrc.isNullOrBlank()) {
             val html = document.html()
             val patterns = listOf(
-                Regex("""<iframe.*?src=["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE),
-                Regex("""file:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE),
-                Regex("""sources:\s*\[[^\]]*file:\s*["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE),
+                Regex("""<iframe.*?src=["']([^"']+)["']""", RegexOption.IGNORE_CASE),
+                Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE),
+                Regex("""file:\s*["']([^"']+\.mp4[^"']*)["']""", RegexOption.IGNORE_CASE),
+                Regex("""sources:\s*\[[^\]]*file:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE),
                 Regex("""data-stream-url=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
             )
             for (pattern in patterns) {
@@ -152,6 +157,22 @@ class FamilyPornProvider : MainAPI() {
         }
 
         if (iframeSrc.isNullOrBlank()) return false
+        iframeSrc = fixUrl(iframeSrc)
+
+        if (iframeSrc.contains(".m3u8") || iframeSrc.contains(".mp4")) {
+            val isM3u8 = iframeSrc.contains(".m3u8")
+            callback(
+                newExtractorLink(
+                    source = name,
+                    name = name,
+                    url = iframeSrc,
+                    type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = data
+                }
+            )
+            return true
+        }
 
         if (iframeSrc.contains("watchstreamhd") || iframeSrc.contains("videostreamingworld") || iframeSrc.contains("bestwish")) {
             FamilyPornExtractor().getUrl(iframeSrc, data, subtitleCallback, callback)
@@ -161,13 +182,22 @@ class FamilyPornProvider : MainAPI() {
         return true
     }
 
+    // FIXED: Inject Cloudflare cookies into search/grid items so CoilImgLoader doesn't 403
     private fun Element.toSearchResult(): SearchResponse? {
-        val anchor = this.selectFirst("article a") ?: return null
-        val title = anchor.attr("title")?.trim() ?: return null
-        val href = fixUrl(anchor.attr("href"))
-        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("src"))
-        return newMovieSearchResponse(title, href, TvType.NSFW) { this.posterUrl = posterUrl }
+        val anchor = this.selectFirst("h3.entry-title a") ?: this.selectFirst("article a") ?: return null
+        val title = anchor.text().takeIf { it.isNotBlank() } ?: anchor.attr("title").takeIf { it.isNotBlank() } ?: return null
+        val href = fixUrl(anchor.attr("href") ?: return null)
+        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("src") ?: this.selectFirst("img")?.attr("data-src"))
+        
+        return newMovieSearchResponse(title, href, TvType.NSFW) { 
+            this.posterUrl = posterUrl 
+            val cookies = android.webkit.CookieManager.getInstance().getCookie(mainUrl) ?: ""
+            this.posterHeaders = mapOf(
+                "Accept" to "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                "Referer" to "$mainUrl/",
+                "Cookie" to cookies,
+                "User-Agent" to CFState.userAgent
+            ).filterValues { it.isNotBlank() }
+        }
     }
-
-    private fun Element.toRecommendationResult(): SearchResponse? = toSearchResult()
 }
