@@ -30,12 +30,10 @@ class FamilyPornExtractor : ExtractorApi() {
         }
     }
 
-    // Unified 3-Tier Extractor for WatchStreamHD, VideoStreamingWorld, and BestWish
     private suspend fun fetchGenericIframe(url: String, referer: String?, callback: (ExtractorLink) -> Unit) {
         val uri = Uri.parse(url)
         val host = uri.host ?: return
         
-        // Extract the ID safely regardless of URL structure (/video/ID, /v/ID, or /ID)
         val videoid = url.trimEnd('/').substringAfterLast("/").substringBefore("?")
         
         // TIER 1: Try standard POST API
@@ -63,7 +61,7 @@ class FamilyPornExtractor : ExtractorApi() {
             }
         } catch (e: Exception) {}
 
-        // TIER 2: Try GET API Fallback (BestWish style)
+        // TIER 2: Try GET API Fallback
         try {
             val getUrl = "https://$host/ajax/stream?filecode=$videoid"
             val responseText = FamilyPornProvider.appGet(url = getUrl, headers = mapOf("Referer" to url)).text
@@ -79,7 +77,7 @@ class FamilyPornExtractor : ExtractorApi() {
             }
         } catch (e: Exception) {}
 
-        // TIER 3: Aggressive Regex HTML Scraping Fallback
+        // TIER 3: Aggressive HTML Scraping
         try {
             val iframeHtml = FamilyPornProvider.appGet(url, headers = mapOf("Referer" to (referer ?: ""))).text
             
@@ -111,7 +109,6 @@ class FamilyPornExtractor : ExtractorApi() {
         } catch (e: Exception) {}
     }
 
-    // Master DTO to handle any JSON structure variations perfectly against ProGuard
     data class MasterResponse(
         @JsonProperty("securedLink") val securedlink: String? = null,
         @JsonProperty("videoSource") val videosource: String? = null,
