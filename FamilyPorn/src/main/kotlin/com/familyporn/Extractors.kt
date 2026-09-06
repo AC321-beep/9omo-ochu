@@ -36,15 +36,17 @@ class FamilyPornExtractor : ExtractorApi() {
         val videoid = url.trimEnd('/').substringAfterLast("/").substringBefore("?")
 
         try {
-            // 1. Fetch the host iframe page
-            val iframeHtml = try {
-                FamilyPornProvider.appGet(url, headers = mapOf(
-                    "Referer" to (referer ?: "https://familypornhd.com/"),
-                    "User-Agent" to CFState.userAgent
-                )).text
-            } catch (e: Exception) { "" }
+            // 1. Establish session context by hitting the player frame wrapper first
+            val playerHeaders = mapOf(
+                "User-Agent" to CFState.userAgent,
+                "Referer" to (referer ?: "https://familypornhd.com/"),
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )
+            
+            val iframeResponse = FamilyPornProvider.appGet(url, headers = playerHeaders)
+            val iframeHtml = if (iframeResponse.isSuccessful) iframeResponse.text else ""
 
-            // 2. Query the FirePlayer backend API router (`do=getVideo`)
+            // 2. Query FirePlayer's official stream router endpoint
             val postUrl = "https://$host/player/index.php?data=$videoid&do=getVideo"
             val postHeaders = mapOf(
                 "Accept" to "application/json, text/javascript, */*; q=0.01",
@@ -55,48 +57,17 @@ class FamilyPornExtractor : ExtractorApi() {
                 "User-Agent" to CFState.userAgent
             )
 
-            val apiResponseText = try {
-                FamilyPornProvider.appPost(
-                    url = postUrl,
-                    data = mapOf("hash" to videoid, "r" to (referer ?: "")),
-                    headers = postHeaders
-                ).text
-            } catch (e: Exception) { "" }
+            val apiResponse = FamilyPornProvider.appPost(
+                url = postUrl,
+                data = mapOf("hash" to videoid, "r" to (referer ?: "")),
+                headers = postHeaders
+            )
 
-            val combinedSource = iframeHtml + "\n" + apiResponseText
+            val responseText = if (apiResponse.isSuccessful) apiResponse.text else ""
 
-            // 3. Safe Regex extraction (avoids JSON parsing crashes entirely)
-            val linkRegex = Regex("""["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""", RegexOption.IGNORE_CASE)
-            var found = false
-
-            for (match in linkRegex.findAll(combinedSource)) {
-                val link = match.groupValues[1]
-                if (link.contains("jquery") || link.contains("bootstrap") || link.contains("loading")) continue
-
-                found = true
-                val isM3u8 = link.contains(".m3u8")
-                callback(
-                    newExtractorLink(
-                        source = "FirePlayer",
-                        name = "FirePlayer",
-                        url = link,
-                        type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = url
-                        this.headers = mapOf(
-                            "Origin" to "https://$host",
-                            "Referer" to url,
-                            "User-Agent" to CFState.userAgent
-                        )
-                    }
-                )
-            }
-
-            if (found) return
-
-            // 4. Only attempt JSON parsing if the response does NOT look like HTML
-            if (!apiResponseText.trim().startsWith("<")) {
-                val json = AppUtils.parseJson<MasterResponse>(apiResponseText)
+            // 3. Check if response is valid JSON or needs regex scraping
+            if (responseText.isNotBlank() && !responseText.trim().startsWith("<")) {
+                val json = AppUtils.parseJson<MasterResponse>(responseText)
                 val streamUrl = json.securedlink ?: json.videosource ?: json.file ?: json.videoSource ?: json.streamingUrl
 
                 if (!streamUrl.isNullOrBlank()) {
@@ -104,7 +75,7 @@ class FamilyPornExtractor : ExtractorApi() {
                     callback(
                         newExtractorLink(
                             source = "FirePlayer",
-                            name = "FirePlayer (API)",
+                            name = "FirePlayer",
                             url = streamUrl,
                             type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                         ) {
@@ -116,9 +87,35 @@ class FamilyPornExtractor : ExtractorApi() {
                             )
                         }
                     )
+                    return
                 }
-            } else {
-                Log.e("FamilyPorn", "Server returned HTML instead of a stream link. Response preview: ${apiResponseText.take(150)}")
+            }
+
+            // 4. Fallback: Scan both iframe HTML and response text for any stray stream links
+            val combinedSource = iframeHtml + "\n" + responseText
+            val linkRegex = Regex("""["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""", RegexOption.IGNORE_CASE)
+
+            for (match in linkRegex.findAll(combinedSource)) {
+                val link = match.groupValues[1]
+                if (link.contains("jquery") || link.contains("bootstrap") || link.contains("loading")) continue
+
+                val isM3u8 = link.contains(".m3u8")
+                callback(
+                    newExtractorLink(
+                        source = "FirePlayer",
+                        name = "FirePlayer (Direct)",
+                        url = link,
+                        type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = url
+                        this.headers = mapOf(
+                            "Origin" to "https://$host",
+                            "Referer" to url,
+                            "User-Agent" to CFState.userAgent
+                        )
+                    }
+                )
+                break
             }
 
         } catch (e: Exception) {
