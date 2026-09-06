@@ -36,36 +36,78 @@ class FamilyPornExtractor : ExtractorApi() {
         val videoid = url.trimEnd('/').substringAfterLast("/").substringBefore("?")
 
         try {
-            // 1. Hit the player container page
+            // 1. Fetch the FirePlayer container page with proper headers
             val iframeHtml = FamilyPornProvider.appGet(url, headers = mapOf(
                 "Referer" to (referer ?: ""),
                 "User-Agent" to CFState.userAgent
             )).text
 
-            // 2. Fetch the player's core script asset shown in your logs
+            // 2. FirePlayer loads its configuration via scripts.php and internal ajax endpoints.
+            // We check the scripts asset or unpack any embedded packers directly.
             val scriptUrl = "https://$host/player/assets/scripts.php?v=6"
-            val scriptText = FamilyPornProvider.appGet(scriptUrl, headers = mapOf(
-                "Referer" to url,
+            val scriptText = try {
+                FamilyPornProvider.appGet(scriptUrl, headers = mapOf(
+                    "Referer" to url,
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "User-Agent" to CFState.userAgent
+                )).text
+            } catch (e: Exception) { "" }
+
+            val combinedSource = iframeHtml + "\n" + scriptText
+            val unpacked = JsUnpacker(combinedSource).unpack() ?: combinedSource
+
+            var linkFound = false
+
+            // 3. Extract any streaming file declaration inside the JS scope
+            val patterns = listOf(
+                Regex("""file\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE),
+                Regex("""file\s*:\s*["'](https?://[^"']+\.mp4[^"']*)["']""", RegexOption.IGNORE_CASE),
+                Regex("""sources\s*:\s*\[\s*\{\s*["']?file["']?\s*:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE),
+                Regex("""(?:src|url)\s*[:=]\s*["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""", RegexOption.IGNORE_CASE)
+            ]
+
+            for (pattern in patterns) {
+                for (match in pattern.findAll(unpacked)) {
+                    val link = match.groupValues[1]
+                    if (link.contains("jquery") || link.contains("bootstrap")) continue
+                    
+                    linkFound = true
+                    val isM3u8 = link.contains(".m3u8")
+                    callback(newExtractorLink(
+                        source = host,
+                        name = host,
+                        url = link,
+                        type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = url
+                        this.headers = mapOf("Origin" to "https://$host")
+                    })
+                }
+            }
+
+            if (linkFound) return
+
+            // 4. Fallback: Query the backend player endpoint using standard post parameters
+            val posturl = "https://$host/player/index.php?data=$videoid&do=getVideo"
+            val postHeaders = mapOf(
+                "Accept" to "*/*",
                 "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to url,
+                "Origin" to "https://$host",
+                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
                 "User-Agent" to CFState.userAgent
-            )).text
-
-            // Combine both texts to search for embedded streams or configuration keys
-            val combinedCode = iframeHtml + "\n" + scriptText
-
-            // 3. Search for direct .m3u8 or .mp4 links
-            val rawLinkRegex = Regex("""(https?://[^"'\s]+(?:\.m3u8|\.mp4)[^"'\s]*)""", RegexOption.IGNORE_CASE)
-            var found = false
-            for (match in rawLinkRegex.findAll(combinedCode)) {
-                val link = match.groupValues[1]
-                if (link.contains("jquery") || link.contains("bootstrap") || link.contains("font-awesome")) continue
-                
-                found = true
-                val isM3u8 = link.contains(".m3u8")
+            )
+            
+            val apiResponse = FamilyPornProvider.appPost(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = postHeaders).text
+            val json = AppUtils.parseJson<MasterResponse>(apiResponse)
+            val apiLink = json.securedlink ?: json.videosource ?: json.file ?: json.videoSource ?: json.streamingUrl
+            
+            if (!apiLink.isNullOrBlank()) {
+                val isM3u8 = apiLink.contains(".m3u8")
                 callback(newExtractorLink(
-                    source = host, 
-                    name = "$host (Stream)", 
-                    url = link, 
+                    source = host,
+                    name = "$host (API)",
+                    url = apiLink,
                     type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 ) {
                     this.referer = url
@@ -73,32 +115,8 @@ class FamilyPornExtractor : ExtractorApi() {
                 })
             }
 
-            if (found) return
-
-            // 4. Fallback to the AJAX backend endpoint
-            val posturl = "https://$host/player/index.php?data=$videoid&do=getVideo"
-            val headers = mapOf(
-                "Accept" to "*/*",
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to url,
-                "Origin" to "https://$host",
-                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
-            )
-            
-            val apiResponse = FamilyPornProvider.appPost(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers).text
-            val json = AppUtils.parseJson<MasterResponse>(apiResponse)
-            val link = json.securedlink ?: json.videosource ?: json.file ?: json.videoSource ?: json.streamingUrl
-            
-            if (!link.isNullOrBlank()) {
-                val isM3u8 = link.contains(".m3u8")
-                callback(newExtractorLink(source = host, name = "$host (API)", url = link, type = if(isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
-                    this.referer = url
-                    this.headers = mapOf("Origin" to "https://$host")
-                })
-            }
-
         } catch (e: Exception) {
-            Log.e("FamilyPorn", "Extraction failed: ${e.message}")
+            Log.e("FamilyPorn", "Extractor error: ${e.message}")
         }
     }
 
