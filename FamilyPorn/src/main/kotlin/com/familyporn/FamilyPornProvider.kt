@@ -90,7 +90,6 @@ class FamilyPornProvider : MainAPI() {
         return newHomePageResponse(listOf(HomePageList(request.name, home, true)), hasNext = true)
     }
 
-    // FlatMap compilation error fixed here
     override suspend fun search(query: String): List<SearchResponse> {
         return search(query, 1)
     }
@@ -163,7 +162,6 @@ class FamilyPornProvider : MainAPI() {
         if (iframeSrc.isNullOrBlank()) return false
         iframeSrc = fixUrl(iframeSrc)
 
-        // Quality parameter removed to fix compilation errors
         if (iframeSrc.contains(".m3u8") || iframeSrc.contains(".mp4")) {
             val isM3u8 = iframeSrc.contains(".m3u8")
             callback(
