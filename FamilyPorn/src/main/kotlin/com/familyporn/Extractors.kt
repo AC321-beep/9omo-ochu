@@ -95,6 +95,7 @@ class FamilyPornExtractor : ExtractorApi() {
         }
     }
 
+    // @JsonProperty guards data classes against Release APK Obfuscation bugs
     data class FireResponse(
         @JsonProperty("securedLink") val securedlink: String? = null,
         @JsonProperty("videoSource") val videosource: String? = null,
