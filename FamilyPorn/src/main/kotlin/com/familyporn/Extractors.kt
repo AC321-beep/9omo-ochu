@@ -37,30 +37,39 @@ class FamilyPornExtractor : ExtractorApi() {
         val videoid = url.trimEnd('/').substringAfterLast("/").substringBefore("?")
 
         try {
-            val posturl = "https://$host/player/index.php?data=$videoid&do=getVideo"
-            val headers = mapOf(
-                "Accept" to "*/*",
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to url,
-                "Origin" to "https://$host",
-                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
-            )
+            // STEP 1: Fetch the raw HTML of the iframe player
+            val htmlResponse = FamilyPornProvider.appGet(url, headers = mapOf(
+                "Referer" to (referer ?: ""),
+                "User-Agent" to CFState.userAgent
+            )).text
             
-            val responseText = FamilyPornProvider.appPost(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers).text
+            var analyzedText = htmlResponse
             
-            // TIER 1: Unpack and aggressively Regex
-            var unpacked = JsUnpacker(responseText).unpack() ?: responseText
-
-            // Sometimes the script is double-packed. Unpack it again if necessary.
-            if (unpacked.contains("eval(function(p,a,c,k,e,d)")) {
-                unpacked = JsUnpacker(unpacked).unpack() ?: unpacked
+            // STEP 2: Defeat the Decoy Trap! Find and unpack EVERY encrypted script on the page
+            var tempHtml = htmlResponse
+            while(tempHtml.contains("eval(function(")) {
+                val unpacked = JsUnpacker(tempHtml).unpack()
+                if (!unpacked.isNullOrBlank() && unpacked != tempHtml) {
+                    analyzedText += "\n" + unpacked
+                    
+                    // Defeat Double-Encryption
+                    if (unpacked.contains("eval(function(")) {
+                        val doubleUnpacked = JsUnpacker(unpacked).unpack()
+                        if (!doubleUnpacked.isNullOrBlank()) analyzedText += "\n" + doubleUnpacked
+                    }
+                    // Mark this block as solved so the loop moves to the next encrypted script
+                    tempHtml = tempHtml.replaceFirst("eval(function(", "solved_eval(")
+                } else {
+                    // Prevent infinite loop if an unpack fails
+                    tempHtml = tempHtml.replaceFirst("eval(function(", "failed_eval(")
+                }
             }
 
             var foundLink = false
 
-            // Look for ANY m3u8 or mp4 link in the decrypted source
+            // STEP 3: Aggressive Regex targeting for direct .m3u8 or .mp4 links in the decrypted code
             val rawLinkRegex = Regex("""(https?://[^"'\s]+(?:\.m3u8|\.mp4)[^"'\s]*)""", RegexOption.IGNORE_CASE)
-            for (match in rawLinkRegex.findAll(unpacked)) {
+            for (match in rawLinkRegex.findAll(analyzedText)) {
                 val link = match.groupValues[1]
                 val isM3u8 = link.contains(".m3u8")
                 foundLink = true
@@ -75,9 +84,9 @@ class FamilyPornExtractor : ExtractorApi() {
                 })
             }
 
-            // Look for Base64 encoded links: atob("aHR0cHM...")
+            // STEP 4: Look for Base64 encoded links: atob("aHR0cHM...")
             val b64Regex = Regex("""atob\(['"]([^'"]+)['"]\)""")
-            for (match in b64Regex.findAll(unpacked)) {
+            for (match in b64Regex.findAll(analyzedText)) {
                 try {
                     val decoded = String(Base64.decode(match.groupValues[1], Base64.DEFAULT))
                     if (decoded.contains(".m3u8") || decoded.contains(".mp4")) {
@@ -98,28 +107,31 @@ class FamilyPornExtractor : ExtractorApi() {
 
             if (foundLink) return
 
-            // TIER 2: Legacy JSON parsing (in case they revert their API)
+            // STEP 5: Fallback to the Legacy POST API just in case they revert their player logic
+            val posturl = "https://$host/player/index.php?data=$videoid&do=getVideo"
+            val headers = mapOf(
+                "Accept" to "*/*",
+                "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to url,
+                "Origin" to "https://$host",
+                "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8"
+            )
+            
             try {
-                val json = AppUtils.parseJson<MasterResponse>(responseText)
+                val apiResponseText = FamilyPornProvider.appPost(url = posturl, data = mapOf("hash" to videoid, "r" to (referer ?: "")), headers = headers).text
+                val json = AppUtils.parseJson<MasterResponse>(apiResponseText)
                 val link = json.securedlink ?: json.videosource ?: json.file ?: json.videoSource ?: json.streamingUrl
                 if (!link.isNullOrBlank()) {
                     val isM3u8 = link.contains(".m3u8")
-                    callback(newExtractorLink(source = host, name = "$host (JSON)", url = link, type = if(isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+                    callback(newExtractorLink(source = host, name = "$host (API)", url = link, type = if(isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
                         this.referer = url
                         this.headers = mapOf("Origin" to "https://$host")
                     })
-                    return
                 }
-            } catch (e: Exception) {
-                // Silently swallow JSON errors because we already know it's returning HTML
-            }
-
-            // TIER 3: If absolutely NO links were found, print the unpacked HTML as an Error so it shows up in Logcat!
-            Log.e("FamilyPorn", "NO VIDEO LINKS FOUND! Here is the decrypted site code:")
-            Log.e("FamilyPorn", unpacked.take(3500)) // Prints the first 3500 characters of the site's code
+            } catch (e: Exception) {}
 
         } catch (e: Exception) {
-            Log.e("FamilyPorn", "Extractor crashed completely: ${e.message}")
+            Log.e("FamilyPorn", "Extractor crashed: ${e.message}")
         }
     }
 
