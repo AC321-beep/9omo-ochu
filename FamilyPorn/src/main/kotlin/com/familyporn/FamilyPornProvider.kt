@@ -262,6 +262,12 @@ class FamilyPornProvider : MainAPI() {
         iframeSrc = fixUrl(iframeSrc)
         Log.e(TAG, "loadLinks() resolved iframe=[$iframeSrc]")
 
+        // ---- Diagnostic + routing decision ----
+        val iframeHost = try { Uri.parse(iframeSrc).host ?: "?" } catch (e: Exception) { "?" }
+        val isOwnDomain = iframeHost == "familypornhd.com" || iframeHost.endsWith(".familypornhd.com")
+        Log.e(TAG, "loadLinks() iframeHost=[$iframeHost]")
+        Log.e(TAG, "loadLinks() isOwnDomain=$isOwnDomain")
+
         var emitted = false
         val trackingCallback: (ExtractorLink) -> Unit = { link ->
             emitted = true
@@ -269,32 +275,43 @@ class FamilyPornProvider : MainAPI() {
             callback(link)
         }
 
-        if (iframeSrc.contains(".m3u8") || iframeSrc.contains(".mp4")) {
-            val isM3u8 = iframeSrc.contains(".m3u8")
-            Log.e(TAG, "loadLinks() direct media, isM3u8=$isM3u8")
-            trackingCallback(
-                newExtractorLink(
-                    source = name,
-                    name = name,
-                    url = iframeSrc,
-                    type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                ) { this.referer = data }
-            )
-        } else if (iframeSrc.contains("watchstreamhd") ||
-                   iframeSrc.contains("videostreamingworld") ||
-                   iframeSrc.contains("bestwish")) {
-            Log.e(TAG, "loadLinks() -> FamilyPornExtractor")
-            try {
-                FamilyPornExtractor().getUrl(iframeSrc, data, subtitleCallback, trackingCallback)
-            } catch (e: Exception) {
-                Log.e(TAG, "loadLinks() extractor threw", e)
+        when {
+            iframeSrc.contains(".m3u8") || iframeSrc.contains(".mp4") -> {
+                val isM3u8 = iframeSrc.contains(".m3u8")
+                Log.e(TAG, "loadLinks() direct media, isM3u8=$isM3u8")
+                trackingCallback(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = iframeSrc,
+                        type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    ) { this.referer = data }
+                )
             }
-        } else {
-            Log.e(TAG, "loadLinks() -> loadExtractor")
-            try {
-                loadExtractor(iframeSrc, data, subtitleCallback, trackingCallback)
-            } catch (e: Exception) {
-                Log.e(TAG, "loadLinks() loadExtractor threw", e)
+
+            isOwnDomain ||
+            iframeSrc.contains("watchstreamhd") ||
+            iframeSrc.contains("videostreamingworld") ||
+            iframeSrc.contains("bestwish") -> {
+                // Route to our extractor directly. Do NOT call loadExtractor
+                // here — CloudStream matches by host substring and would hand
+                // familypornhd.com URLs back to FamilyPornExtractor, which then
+                // falls through to loadExtractor again → infinite recursion.
+                Log.e(TAG, "loadLinks() -> FamilyPornExtractor")
+                try {
+                    FamilyPornExtractor().getUrl(iframeSrc, data, subtitleCallback, trackingCallback)
+                } catch (e: Exception) {
+                    Log.e(TAG, "loadLinks() extractor threw", e)
+                }
+            }
+
+            else -> {
+                Log.e(TAG, "loadLinks() -> loadExtractor (external host)")
+                try {
+                    loadExtractor(iframeSrc, data, subtitleCallback, trackingCallback)
+                } catch (e: Exception) {
+                    Log.e(TAG, "loadLinks() loadExtractor threw", e)
+                }
             }
         }
 
