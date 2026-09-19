@@ -16,14 +16,11 @@ class FamilyPornExtractor : ExtractorApi() {
 
     companion object {
         const val TAG = "FamilyPorn"
-        // Used only if CFState.userAgent hasn't been seeded by a CF dialog yet.
-        // Must look like a real browser or KVS /get_file/ returns 403.
         private const val FALLBACK_UA =
             "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
     }
 
-    /** Ensure CFState.userAgent is never empty for the rest of the session. */
     private fun ensureUa(): String {
         if (CFState.userAgent.isBlank()) {
             val seeded = try {
@@ -36,11 +33,22 @@ class FamilyPornExtractor : ExtractorApi() {
     }
 
     /**
-     * Builds the header map used by ExoPlayer when it fetches the stream.
-     * These are the headers that actually matter for /get_file/ token
-     * validation, and they MUST include a non-empty UA and the session cookie.
+     * kt_player.js appends `rnd=<Date.now()>` to every /get_file/ fetch.
+     * Without it KVS serves the anti-hotlink decoy (200 OK GIF) instead
+     * of the real video.
      */
-    private fun streamHeaders(streamUrl: String, embedUrl: String, host: String): Map<String, String> {
+    private fun appendRnd(rawUrl: String): String {
+        val sep = if (rawUrl.contains("?")) "&" else "?"
+        return "$rawUrl${sep}rnd=${System.currentTimeMillis()}"
+    }
+
+    /**
+     * Exact header set the browser sends for the video fetch:
+     *   User-Agent, Referer (embed page), Accept: */*, Cookie.
+     * Deliberately no Origin, no Sec-Fetch-*, no Accept-Language —
+     * the browser doesn't send those on a same-origin <video> load.
+     */
+    private fun streamHeaders(streamUrl: String, embedUrl: String): Map<String, String> {
         val ua = ensureUa()
         val cookie = try {
             CookieManager.getInstance().getCookie(streamUrl)
@@ -51,15 +59,10 @@ class FamilyPornExtractor : ExtractorApi() {
         val headers = mutableMapOf(
             "User-Agent" to ua,
             "Referer" to embedUrl,
-            "Origin" to "https://$host",
-            "Accept" to "*/*",
-            "Accept-Language" to "en-US,en;q=0.9",
-            "Sec-Fetch-Dest" to "video",
-            "Sec-Fetch-Mode" to "no-cors",
-            "Sec-Fetch-Site" to "same-origin"
+            "Accept" to "*/*"
         )
         if (cookie.isNotBlank()) headers["Cookie"] = cookie
-        Log.e(TAG, "streamHeaders: ua=[$ua] cookieLen=${cookie.length} headers=$headers")
+        Log.e(TAG, "streamHeaders: url=[$streamUrl] uaLen=${ua.length} cookieLen=${cookie.length}")
         return headers
     }
 
@@ -127,7 +130,7 @@ class FamilyPornExtractor : ExtractorApi() {
         Log.e(TAG, "FP host=[$host] videoid=[$videoid]")
 
         try {
-            // 1. Prime session (sets cookies on the FirePlayer host).
+            // 1. Fetch embed page (also primes cookies on the host).
             val playerHeaders = mapOf(
                 "User-Agent" to ensureUa(),
                 "Referer" to (referer ?: "https://familypornhd.com/"),
@@ -138,9 +141,8 @@ class FamilyPornExtractor : ExtractorApi() {
             val iframeHtml = if (iframeResponse.isSuccessful) iframeResponse.text else ""
             Log.e(TAG, "FP step1 code=${iframeResponse.code} htmlLen=${iframeHtml.length}")
 
-            // 2. Query FirePlayer's do=getVideo endpoint. If it 404s (which
-            // happens on KVS-style own-domain embeds), don't waste time —
-            // skip straight to scraping.
+            // 2. FirePlayer do=getVideo (works on watchstream / vsw / bestwish;
+            //    returns 404 on KVS-hosted own-domain embeds).
             val postUrl = "https://$host/player/index.php?data=$videoid&do=getVideo"
             val postHeaders = mapOf(
                 "Accept" to "application/json, text/javascript, */*; q=0.01",
@@ -160,7 +162,7 @@ class FamilyPornExtractor : ExtractorApi() {
             )
             val responseText = if (apiResponse.isSuccessful) apiResponse.text else ""
             Log.e(TAG, "FP step2 code=${apiResponse.code} bodyLen=${responseText.length}")
-            Log.e(TAG, "FP step2 preview=${responseText.take(400).replace("\n", " ")}")
+            Log.e(TAG, "FP step2 preview=${responseText.take(300).replace("\n", " ")}")
 
             if (apiResponse.code == 200 &&
                 responseText.isNotBlank() &&
@@ -175,16 +177,18 @@ class FamilyPornExtractor : ExtractorApi() {
                         ?: json.streamingUrl
                     Log.e(TAG, "FP step3 chosen=[$streamUrl]")
                     if (!streamUrl.isNullOrBlank()) {
-                        val isM3u8 = streamUrl.contains(".m3u8")
+                        val finalUrl = appendRnd(streamUrl)
+                        val isM3u8 = finalUrl.contains(".m3u8")
+                        Log.e(TAG, "FP step3 emitting isM3u8=$isM3u8")
                         callback(
                             newExtractorLink(
                                 source = "FirePlayer",
                                 name = "FirePlayer",
-                                url = streamUrl,
+                                url = finalUrl,
                                 type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                             ) {
                                 this.referer = url
-                                this.headers = streamHeaders(streamUrl, url, host)
+                                this.headers = streamHeaders(finalUrl, url)
                             }
                         )
                         Log.e(TAG, "FP step3 emitted")
@@ -194,43 +198,68 @@ class FamilyPornExtractor : ExtractorApi() {
                     Log.e(TAG, "FP step3 JSON parse failed: ${e.message}", e)
                 }
             } else {
-                Log.e(TAG, "FP step2 not usable (code=${apiResponse.code}); falling back to scrape")
+                Log.e(TAG, "FP step2 not usable (code=${apiResponse.code}); KVS scrape")
             }
 
-            // 3. Scrape the embed HTML for direct .mp4 / .m3u8.
-            Log.e(TAG, "FP step4 regex fallback")
-            val linkRegex = Regex(
-                """["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""",
+            // 3. KVS scrape.
+            //
+            // From DevTools (embed /embed/42):
+            //   /get_file/0/E2ZW…mp4/?v-acctoken=…               → 200 GIF (thumbnail, 0.5 kB)
+            //   /get_file/0/_f6W…mp4/?v-acctoken=…&embed=true    → 302 → srv1/remote_control.php → 206 video
+            //
+            // The discriminator is `&embed=true`. Non-embed /get_file/ URLs
+            // are always the thumbnail sprite and must never be emitted as
+            // a playable source.
+            val getFileRegex = Regex(
+                """["'](https?://[^"']+/get_file/[^"']+\.(?:m3u8|mp4)[^"']*)["']""",
                 RegexOption.IGNORE_CASE
             )
-            val matches = linkRegex.findAll(iframeHtml)
+            val embedVariants = getFileRegex.findAll(iframeHtml)
                 .map { it.groupValues[1] }
-                .filterNot { it.contains("preview", true) }   // skip thumbnails
-                .filterNot { it.contains("screenshot", true) }
-                .filterNot { it.contains("jquery") }
-                .filterNot { it.contains("bootstrap") }
+                .filter { it.contains("&embed=true") }
                 .distinct()
                 .toList()
-            Log.e(TAG, "FP step4 usable matches (${matches.size}): $matches")
+            Log.e(TAG, "FP step4 get_file &embed=true matches (${embedVariants.size}): $embedVariants")
 
-            for (link in matches) {
-                val isM3u8 = link.contains(".m3u8")
-                Log.e(TAG, "FP step4 emitting isM3u8=$isM3u8 [$link]")
+            // Also catch direct m3u8/mp4 not served via /get_file/ — some
+            // embeds hardcode an HLS URL in the HTML.
+            val otherMedia = Regex(
+                """["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""",
+                RegexOption.IGNORE_CASE
+            ).findAll(iframeHtml)
+                .map { it.groupValues[1] }
+                .filterNot { it.contains("/get_file/") }
+                .filterNot { it.contains("preview", true) }
+                .filterNot { it.contains("screenshot", true) }
+                .filterNot { it.endsWith(".jpg", true) }
+                .filterNot { it.endsWith(".jpeg", true) }
+                .filterNot { it.endsWith(".webp", true) }
+                .distinct()
+                .toList()
+            Log.e(TAG, "FP step4 other direct media (${otherMedia.size}): $otherMedia")
+
+            val toEmit = embedVariants + otherMedia
+            var idx = 0
+            for (raw in toEmit) {
+                val finalUrl = appendRnd(raw)
+                val isM3u8 = raw.contains(".m3u8")
+                idx++
+                Log.e(TAG, "FP step4 emit #$idx isM3u8=$isM3u8 final=[$finalUrl]")
                 callback(
                     newExtractorLink(
                         source = "FirePlayer",
-                        name = "FirePlayer (Direct)",
-                        url = link,
+                        name = "FirePlayer (Direct #$idx)",
+                        url = finalUrl,
                         type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     ) {
                         this.referer = url
-                        this.headers = streamHeaders(link, url, host)
+                        this.headers = streamHeaders(finalUrl, url)
                     }
                 )
-                return
             }
+            if (idx > 0) return
 
-            Log.e(TAG, "FP FAILURE: no stream URL for host=[$host] videoid=[$videoid]")
+            Log.e(TAG, "FP FAILURE: nothing emitted for host=[$host] videoid=[$videoid]")
             Log.e(TAG, "FP iframeHtml (2000): ${iframeHtml.take(2000)}")
 
         } catch (e: Exception) {
