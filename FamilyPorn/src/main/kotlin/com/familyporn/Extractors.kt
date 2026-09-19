@@ -32,22 +32,18 @@ class FamilyPornExtractor : ExtractorApi() {
         return CFState.userAgent
     }
 
-    /**
-     * kt_player.js appends `rnd=<Date.now()>` to every /get_file/ fetch.
-     * Without it KVS serves the anti-hotlink decoy (200 OK GIF) instead
-     * of the real video.
-     */
+    // kt_player.js appends "rnd=<Date.now()>" to every /get_file/ fetch.
+    // Without it KVS serves the anti-hotlink decoy (200 OK GIF) instead
+    // of the real video.
     private fun appendRnd(rawUrl: String): String {
         val sep = if (rawUrl.contains("?")) "&" else "?"
         return "$rawUrl${sep}rnd=${System.currentTimeMillis()}"
     }
 
-    /**
-     * Exact header set the browser sends for the video fetch:
-     *   User-Agent, Referer (embed page), Accept: */*, Cookie.
-     * Deliberately no Origin, no Sec-Fetch-*, no Accept-Language —
-     * the browser doesn't send those on a same-origin <video> load.
-     */
+    // Header set for the video fetch. Mirrors what the browser sends:
+    // User-Agent, Referer (embed page), Accept, Cookie. Deliberately no
+    // Origin, no Sec-Fetch-*, no Accept-Language — the browser does not
+    // send those on a same-origin video load.
     private fun streamHeaders(streamUrl: String, embedUrl: String): Map<String, String> {
         val ua = ensureUa()
         val cookie = try {
@@ -204,10 +200,10 @@ class FamilyPornExtractor : ExtractorApi() {
             // 3. KVS scrape.
             //
             // From DevTools (embed /embed/42):
-            //   /get_file/0/E2ZW…mp4/?v-acctoken=…               → 200 GIF (thumbnail, 0.5 kB)
-            //   /get_file/0/_f6W…mp4/?v-acctoken=…&embed=true    → 302 → srv1/remote_control.php → 206 video
+            //   /get_file/0/E2ZW...mp4/?v-acctoken=...            -> 200 GIF (thumbnail, 0.5 kB)
+            //   /get_file/0/_f6W...mp4/?v-acctoken=...&embed=true -> 302 -> srv1/remote_control.php -> 206 video
             //
-            // The discriminator is `&embed=true`. Non-embed /get_file/ URLs
+            // The discriminator is "embed=true". Non-embed /get_file/ URLs
             // are always the thumbnail sprite and must never be emitted as
             // a playable source.
             val getFileRegex = Regex(
@@ -219,7 +215,7 @@ class FamilyPornExtractor : ExtractorApi() {
                 .filter { it.contains("&embed=true") }
                 .distinct()
                 .toList()
-            Log.e(TAG, "FP step4 get_file &embed=true matches (${embedVariants.size}): $embedVariants")
+            Log.e(TAG, "FP step4 get_file embed=true matches (${embedVariants.size}): $embedVariants")
 
             // Also catch direct m3u8/mp4 not served via /get_file/ — some
             // embeds hardcode an HLS URL in the HTML.
