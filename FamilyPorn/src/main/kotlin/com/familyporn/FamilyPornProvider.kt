@@ -90,10 +90,12 @@ class FamilyPornProvider : MainAPI() {
         }
     }
 
-    override val mainPage = mainPageOf(
+       override val mainPage = mainPageOf(
         "$mainUrl/" to "All Porn Videos",
         "$mainUrl/tag/milf/" to "Milf",
-        "$mainUrl/tag/creampie/" to "Creampie"
+        "$mainUrl/tag/creampie/" to "Creampie",
+        "$mainUrl/tag/ebony/" to "Ebony",
+        "$mainUrl/tag/athletic/" to "Athletic"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
