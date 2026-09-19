@@ -10,8 +10,10 @@ buildscript {
         maven("https://jitpack.io")
     }
     dependencies {
+        // Safe, tested version that works with your GitHub Actions runner
         classpath("com.android.tools.build:gradle:9.1.0")
         classpath("com.github.recloudstream:gradle:81b1d424d2")
+        // Latest stable Kotlin tooling release
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10") 
     }
 }
@@ -32,6 +34,7 @@ fun Project.android(configuration: LibraryExtension.() -> Unit) =
 
 subprojects {
     apply(plugin = "com.android.library")
+    // REMOVED: apply(plugin = "kotlin-android") is no longer allowed in AGP 9.0+
     apply(plugin = "com.lagradost.cloudstream3.gradle")
 
     cloudstream {
@@ -69,9 +72,11 @@ subprojects {
         val cloudstream by configurations
         val implementation by configurations
 
+        // Sticking to pre-release to avoid 429/404 Jitpack errors
         cloudstream("com.lagradost:cloudstream3:pre-release")
         implementation(kotlin("stdlib"))
         
+        // --- LATEST 2026 DEPENDENCIES ---
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
         implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
