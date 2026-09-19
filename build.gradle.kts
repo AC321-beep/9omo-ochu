@@ -5,13 +5,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 import java.io.File
 
 // =========================================================================
-//  DYNAMIC VERSION RESOLVER
-//  - Looks up the latest release of each dependency from Maven Central /
-//    Google Maven at configure time.
-//  - Caches the result for 24h in .gradle/version-cache.properties so CI
-//    doesn't hammer the registries on every build.
-//  - Falls back to a known-good pin if the network fails.
-//  - Delete the cache file to force a refresh immediately.
+//  DYNAMIC VERSION RESOLVER (runtime deps only — see note at bottom)
 // =========================================================================
 class VersionResolver(private val cacheFile: File) {
     private val ttlMs = 24L * 60 * 60 * 1000
@@ -76,24 +70,24 @@ class VersionResolver(private val cacheFile: File) {
 
 val versionResolver = VersionResolver(File(rootDir, ".gradle/version-cache.properties"))
 
-val agpVersion          = versionResolver.google ("com.android.tools.build",       "gradle",                    "9.1.0")
-val kotlinVersion       = versionResolver.central("org.jetbrains.kotlin",         "kotlin-gradle-plugin",     "2.4.10")
-val coroutinesVersion   = versionResolver.central("org.jetbrains.kotlinx",        "kotlinx-coroutines-core",  "1.11.0")
-val serializationVersion= versionResolver.central("org.jetbrains.kotlinx",        "kotlinx-serialization-json", "1.11.0")
-val okhttpVersion       = versionResolver.central("com.squareup.okhttp3",          "okhttp",                   "5.4.0")
-val jsoupVersion        = versionResolver.central("org.jsoup",                     "jsoup",                    "1.23.1")
-val jacksonVersion      = versionResolver.central("com.fasterxml.jackson.module",  "jackson-module-kotlin",    "2.22.1")
-val browserVersion      = versionResolver.google ("androidx.browser",              "browser",                  "1.10.0")
-val annotationVersion   = versionResolver.google ("androidx.annotation",           "annotation",               "1.10.0")
-val rhinoVersion        = versionResolver.central("org.mozilla",                   "rhino",                    "1.8.1")
-
-// Jitpack-hosted deps can't be auto-resolved from maven-metadata.xml, so
-// these two stay pinned. Bump them by hand when you want a new revision.
-val cloudstreamGradleCommit = "81b1d424d2"
-val niceHttpVersion         = "0.4.18"
+val coroutinesVersion    = versionResolver.central("org.jetbrains.kotlinx",       "kotlinx-coroutines-core",     "1.11.0")
+val serializationVersion = versionResolver.central("org.jetbrains.kotlinx",       "kotlinx-serialization-json",  "1.11.0")
+val okhttpVersion        = versionResolver.central("com.squareup.okhttp3",         "okhttp",                      "5.4.0")
+val jsoupVersion         = versionResolver.central("org.jsoup",                    "jsoup",                       "1.23.1")
+val jacksonVersion       = versionResolver.central("com.fasterxml.jackson.module", "jackson-module-kotlin",       "2.22.1")
+val browserVersion       = versionResolver.google ("androidx.browser",             "browser",                     "1.10.0")
+val annotationVersion    = versionResolver.google ("androidx.annotation",          "annotation",                  "1.10.0")
+val rhinoVersion         = versionResolver.central("org.mozilla",                  "rhino",                       "1.8.1")
 
 // =========================================================================
-//  BUILD SCRIPT
+//  BUILDSCRIPT — versions must be literal here.
+//
+//  Reason: Gradle compiles the `buildscript { }` block into its own pass
+//  that runs BEFORE the rest of this file. Top-level `val`s declared below
+//  or above it are not in scope. Making these dynamic would require a
+//  `buildSrc/` module or a properties file read by settings.gradle.kts —
+//  not worth it since AGP/Kotlin/Gradle-plugin versions change at most a
+//  few times per year.
 // =========================================================================
 buildscript {
     repositories {
@@ -102,9 +96,9 @@ buildscript {
         maven("https://jitpack.io")
     }
     dependencies {
-        classpath("com.android.tools.build:gradle:$agpVersion")
-        classpath("com.github.recloudstream:gradle:$cloudstreamGradleCommit")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
+        classpath("com.android.tools.build:gradle:9.1.0")
+        classpath("com.github.recloudstream:gradle:81b1d424d2")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10")
     }
 }
 
@@ -139,12 +133,6 @@ subprojects {
             minSdk = 21
         }
 
-        // *** JVM TARGET FIX ***
-        // Was VERSION_1_8, which is why the Kotlin compiler refused to inline
-        // the JVM-11 bytecode coming in from CloudStream pre-release and the
-        // modern stdlib/coroutines/okhttp jars. Bumping to 17 matches AGP 9's
-        // own toolchain requirement AND kills the INLINE_FROM_HIGHER_PLATFORM
-        // diagnostic at the source — no per-file @Suppress needed.
         compileOptions {
             sourceCompatibility = JavaVersion.VERSION_17
             targetCompatibility = JavaVersion.VERSION_17
@@ -168,7 +156,6 @@ subprojects {
         val cloudstream by configurations
         val implementation by configurations
 
-        // Jitpack "pre-release" tag — already a moving target, nothing to resolve.
         cloudstream("com.lagradost:cloudstream3:pre-release")
         implementation(kotlin("stdlib"))
 
@@ -177,7 +164,7 @@ subprojects {
         implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$serializationVersion")
 
         implementation("com.squareup.okhttp3:okhttp:$okhttpVersion")
-        implementation("com.github.Blatzar:NiceHttp:$niceHttpVersion")
+        implementation("com.github.Blatzar:NiceHttp:0.4.18")
         implementation("org.jsoup:jsoup:$jsoupVersion")
         implementation("com.fasterxml.jackson.module:jackson-module-kotlin:$jacksonVersion")
 
@@ -191,5 +178,4 @@ tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
 
-// Flush the version cache once the build configuration is done.
 gradle.projectsEvaluated { versionResolver.flush() }
