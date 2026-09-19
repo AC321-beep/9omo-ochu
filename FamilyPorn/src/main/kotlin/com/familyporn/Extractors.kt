@@ -32,21 +32,36 @@ class FamilyPornExtractor : ExtractorApi() {
             Log.e(TAG, "EX getUrl() ABORT: blank url")
             return
         }
-        try {
-            when {
-                url.contains("watchstreamhd.com") ||
-                url.contains("videostreamingworld.com") ||
-                url.contains("bestwish.lol") -> {
-                    Log.e(TAG, "EX getUrl() -> fetchFirePlayerContent")
-                    fetchFirePlayerContent(url, referer, callback)
-                }
-                else -> {
-                    Log.e(TAG, "EX getUrl() -> loadExtractor fallback")
-                    loadExtractor(url, referer, subtitleCallback, callback)
-                }
+
+        val host = try { Uri.parse(url).host ?: "" } catch (e: Exception) { "" }
+        Log.e(TAG, "EX getUrl() host=[$host]")
+
+        // Exact-or-subdomain match. "evilfamilypornhd.com" must NOT match.
+        val isOwnDomain = host == "familypornhd.com" || host.endsWith(".familypornhd.com")
+        Log.e(TAG, "EX getUrl() isOwnDomain=$isOwnDomain")
+
+        val isFirePlayerHost =
+            isOwnDomain ||
+            url.contains("watchstreamhd.com") ||
+            url.contains("videostreamingworld.com") ||
+            url.contains("bestwish.lol")
+
+        if (isFirePlayerHost) {
+            Log.e(TAG, "EX getUrl() -> fetchFirePlayerContent")
+            try {
+                fetchFirePlayerContent(url, referer, callback)
+            } catch (e: Exception) {
+                Log.e(TAG, "EX getUrl() fetchFirePlayerContent threw", e)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "EX getUrl() unhandled", e)
+        } else {
+            // CRITICAL: only delegate here for EXTERNAL hosts. If this ever
+            // routes back to our own extractor we hit infinite recursion.
+            Log.e(TAG, "EX getUrl() -> loadExtractor (external host)")
+            try {
+                loadExtractor(url, referer, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e(TAG, "EX getUrl() loadExtractor threw", e)
+            }
         }
     }
 
@@ -76,12 +91,13 @@ class FamilyPornExtractor : ExtractorApi() {
             val iframeResponse = FamilyPornProvider.appGet(url, headers = playerHeaders)
             val iframeHtml = if (iframeResponse.isSuccessful) iframeResponse.text else ""
             Log.e(TAG, "FP step1 code=${iframeResponse.code} htmlLen=${iframeHtml.length}")
+            Log.e(TAG, "FP step1 preview=${iframeHtml.take(400).replace("\n", " ")}")
 
             // 2. Query FirePlayer's do=getVideo endpoint.
             val postUrl = "https://$host/player/index.php?data=$videoid&do=getVideo"
             val postHeaders = mapOf(
                 "Accept" to "application/json, text/javascript, */*; q=0.01",
-                "X-Requested-With" to "XMLHttpRequest", // <-- must survive interceptor
+                "X-Requested-With" to "XMLHttpRequest",
                 "Referer" to url,
                 "Origin" to "https://$host",
                 "Content-Type" to "application/x-www-form-urlencoded; charset=UTF-8",
@@ -97,7 +113,7 @@ class FamilyPornExtractor : ExtractorApi() {
             )
             val responseText = if (apiResponse.isSuccessful) apiResponse.text else ""
             Log.e(TAG, "FP step2 code=${apiResponse.code} bodyLen=${responseText.length}")
-            Log.e(TAG, "FP step2 preview=${responseText.take(500).replace("\n", " ")}")
+            Log.e(TAG, "FP step2 preview=${responseText.take(600).replace("\n", " ")}")
 
             // 3. Try JSON first.
             if (responseText.isNotBlank() && !responseText.trim().startsWith("<")) {
