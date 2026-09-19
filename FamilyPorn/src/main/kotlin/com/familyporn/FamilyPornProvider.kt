@@ -1,7 +1,6 @@
 package com.familyporn
 
 import android.net.Uri
-import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import com.lagradost.cloudstream3.*
@@ -20,30 +19,21 @@ class FamilyPornProvider : MainAPI() {
     override val supportedTypes = setOf(TvType.NSFW)
 
     companion object {
-        const val TAG = "FamilyPorn"
         val cfInterceptor = CFInterceptor()
 
         suspend fun resolveCloudflare(url: String): Boolean = suspendCancellableCoroutine { cont ->
-            Log.e(TAG, "resolveCloudflare() for [$url]")
             var resumed = false
             val activity = CommonActivity.activity
-            Log.e(TAG, "resolveCloudflare: activity=$activity")
             activity?.runOnUiThread {
                 try {
                     val dialog = CFDialog(url) { success ->
-                        Log.e(TAG, "resolveCloudflare: CFDialog result=$success")
-                        if (!resumed) {
-                            resumed = true
-                            cont.resume(success)
-                        }
+                        if (!resumed) { resumed = true; cont.resume(success) }
                     }
                     dialog.show()
                 } catch (e: Exception) {
-                    Log.e(TAG, "resolveCloudflare: dialog failed", e)
                     if (!resumed) { resumed = true; cont.resume(false) }
                 }
             } ?: run {
-                Log.e(TAG, "resolveCloudflare: activity null")
                 if (!resumed) { resumed = true; cont.resume(false) }
             }
         }
@@ -52,31 +42,16 @@ class FamilyPornProvider : MainAPI() {
             url: String,
             headers: Map<String, String> = emptyMap()
         ): com.lagradost.nicehttp.NiceResponse {
-            Log.e(TAG, "appGet() url=[$url] headers=$headers")
-            var response = try {
-                app.get(url, headers = headers, interceptor = cfInterceptor)
-            } catch (e: Exception) {
-                Log.e(TAG, "appGet() threw for [$url]", e)
-                throw e
-            }
-            Log.e(TAG, "appGet() code=${response.code} url=${response.url}")
-            Log.e(TAG, "appGet() body length=${response.text.length}")
-            Log.e(TAG, "appGet() preview=${response.text.take(300).replace("\n", " ")}")
-
+            var response = app.get(url, headers = headers, interceptor = cfInterceptor)
             val text = response.text.lowercase()
             val isChallenge = response.code in listOf(403, 503) &&
                     (text.contains("cloudflare") || text.contains("just a moment"))
-            Log.e(TAG, "appGet() isChallenge=$isChallenge")
-
             if (isChallenge) {
                 val uri = Uri.parse(url)
                 val safeHostUrl = "${uri.scheme}://${uri.host}/"
                 if (resolveCloudflare(safeHostUrl)) {
-                    Log.e(TAG, "appGet() CF resolved, retrying")
                     response = app.get(url, headers = headers, interceptor = cfInterceptor)
-                    Log.e(TAG, "appGet() retry code=${response.code} len=${response.text.length}")
                 } else {
-                    Log.e(TAG, "appGet() CF failed/cancelled")
                     throw Error("Cloudflare bypass failed or cancelled.")
                 }
             }
@@ -88,17 +63,7 @@ class FamilyPornProvider : MainAPI() {
             data: Map<String, String> = emptyMap(),
             headers: Map<String, String> = emptyMap()
         ): com.lagradost.nicehttp.NiceResponse {
-            Log.e(TAG, "appPost() url=[$url] data=$data headers=$headers")
-            var response = try {
-                app.post(url, data = data, headers = headers, interceptor = cfInterceptor)
-            } catch (e: Exception) {
-                Log.e(TAG, "appPost() threw for [$url]", e)
-                throw e
-            }
-            Log.e(TAG, "appPost() code=${response.code} url=${response.url}")
-            Log.e(TAG, "appPost() body length=${response.text.length}")
-            Log.e(TAG, "appPost() preview=${response.text.take(500).replace("\n", " ")}")
-
+            var response = app.post(url, data = data, headers = headers, interceptor = cfInterceptor)
             val text = response.text.lowercase()
             val isChallenge = response.code in listOf(403, 503) &&
                     (text.contains("cloudflare") || text.contains("just a moment"))
@@ -107,7 +72,6 @@ class FamilyPornProvider : MainAPI() {
                 val safeHostUrl = "${uri.scheme}://${uri.host}/"
                 if (resolveCloudflare(safeHostUrl)) {
                     response = app.post(url, data = data, headers = headers, interceptor = cfInterceptor)
-                    Log.e(TAG, "appPost() retry code=${response.code}")
                 } else {
                     throw Error("Cloudflare bypass failed or cancelled.")
                 }
@@ -120,7 +84,6 @@ class FamilyPornProvider : MainAPI() {
             headers: Map<String, String>? = null,
             referer: String? = null
         ): Document {
-            Log.e(TAG, "getDocument() url=[$url] referer=[$referer]")
             val finalHeaders = headers?.toMutableMap() ?: mutableMapOf()
             referer?.let { finalHeaders["Referer"] = it }
             return appGet(url, finalHeaders).document
@@ -135,37 +98,29 @@ class FamilyPornProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page == 1) request.data else "${request.data}page/$page/"
-        Log.e(TAG, "getMainPage() page=$page name=${request.name} url=[$url]")
         val document = getDocument(url)
         val home = document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
-        Log.e(TAG, "getMainPage() items=${home.size}")
         return newHomePageResponse(listOf(HomePageList(request.name, home, true)), hasNext = true)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.e(TAG, "search() query=[$query]")
         val document = getDocument("$mainUrl/?s=$query")
-        val results = document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
-        Log.e(TAG, "search() results=${results.size}")
-        return results
+        return document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = if (page == 1) "$mainUrl/?s=$query" else "$mainUrl/page/$page/?s=$query"
-        Log.e(TAG, "search(page) query=[$query] page=$page url=[$url]")
         val document = getDocument(url)
         val results = document.select("li.g1-collection-item").mapNotNull { it.toSearchResult() }
         return newSearchResponseList(results, hasNext = true)
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.e(TAG, "load() url=[$url]")
         val document = getDocument(url)
 
         val title = document.selectFirst("h1.entry-title")?.text()
             ?: document.selectFirst("meta[property=og:title]")?.attr("content")?.substringBefore(" - ")
             ?: "Unknown Title"
-        Log.e(TAG, "load() title=[$title]")
 
         val description = document.select("div.entry-content p").text().trim().takeIf { it.isNotBlank() }
             ?: document.selectFirst("meta[property=og:description]")?.attr("content") ?: ""
@@ -174,12 +129,10 @@ class FamilyPornProvider : MainAPI() {
 
         val posterUrl = document.selectFirst("meta[property=og:image]")?.attr("content")
             ?: document.selectFirst("div.entry-content img")?.attr("src")
-        Log.e(TAG, "load() poster=[$posterUrl]")
 
         val recommendations = document.select(
             "aside.g1-related-entries li.g1-collection-item, aside.g1-more-from li.g1-collection-item"
         ).mapNotNull { it.toSearchResult() }
-        Log.e(TAG, "load() recommendations=${recommendations.size}")
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = fixUrlNull(posterUrl)
@@ -211,74 +164,50 @@ class FamilyPornProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.e(TAG, "========== loadLinks() START ==========")
-        Log.e(TAG, "loadLinks() data=[$data] isCasting=$isCasting")
-
-        val document = try {
-            getDocument(data)
-        } catch (e: Exception) {
-            Log.e(TAG, "loadLinks() getDocument failed", e)
-            return false
-        }
-        Log.e(TAG, "loadLinks() html length=${document.html().length}")
+        val document = try { getDocument(data) } catch (e: Exception) { return false }
 
         var iframeSrc = document.selectFirst(
             "div.embed-container iframe, div.video-wrapper iframe, " +
                     "iframe[src*='watchstream'], iframe[src*='videostreamingworld'], " +
                     "iframe[src*='bestwish']"
         )?.attr("src")
-        Log.e(TAG, "loadLinks() step1 iframeSrc=[$iframeSrc]")
 
         if (iframeSrc.isNullOrBlank()) {
-            val allIframes = document.select("iframe").mapNotNull { it.attr("src") }
-            Log.e(TAG, "loadLinks() all iframes=$allIframes")
-            iframeSrc = allIframes.firstOrNull { it.contains("http") }
-            Log.e(TAG, "loadLinks() step2 iframeSrc=[$iframeSrc]")
+            iframeSrc = document.select("iframe")
+                .mapNotNull { it.attr("src") }
+                .firstOrNull { it.contains("http") }
         }
 
         if (iframeSrc.isNullOrBlank()) {
-            Log.e(TAG, "loadLinks() no iframe, regex fallback")
             val html = document.html()
             val patterns = listOf(
-                Regex("""<iframe.*?src=["']([^"']+)["']""", RegexOption.IGNORE_CASE) to "iframe",
-                Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE) to "m3u8",
-                Regex("""file:\s*["']([^"']+\.mp4[^"']*)["']""", RegexOption.IGNORE_CASE) to "mp4",
-                Regex("""sources:\s*\[[^\]]*file:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE) to "sources",
-                Regex("""data-stream-url=["']([^"']+)["']""", RegexOption.IGNORE_CASE) to "data-stream-url"
+                Regex("""<iframe.*?src=["']([^"']+)["']""", RegexOption.IGNORE_CASE),
+                Regex("""file:\s*["']([^"']+\.m3u8[^"']*)["']""", RegexOption.IGNORE_CASE),
+                Regex("""file:\s*["']([^"']+\.mp4[^"']*)["']""", RegexOption.IGNORE_CASE),
+                Regex("""sources:\s*\[[^\]]*file:\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE),
+                Regex("""data-stream-url=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
             )
-            for ((pattern, label) in patterns) {
+            for (pattern in patterns) {
                 val match = pattern.find(html)
-                Log.e(TAG, "loadLinks() regex [$label] -> ${match?.groupValues?.getOrNull(1)}")
                 if (match != null) { iframeSrc = match.groupValues[1]; break }
             }
         }
 
-        if (iframeSrc.isNullOrBlank()) {
-            Log.e(TAG, "loadLinks() ABORT: no iframe found")
-            Log.e(TAG, "loadLinks() html preview=${document.html().take(1500).replace("\n", " ")}")
-            return false
-        }
-
+        if (iframeSrc.isNullOrBlank()) return false
         iframeSrc = fixUrl(iframeSrc)
-        Log.e(TAG, "loadLinks() resolved iframe=[$iframeSrc]")
 
-        // ---- Diagnostic + routing decision ----
-        val iframeHost = try { Uri.parse(iframeSrc).host ?: "?" } catch (e: Exception) { "?" }
+        val iframeHost = try { Uri.parse(iframeSrc).host ?: "" } catch (e: Exception) { "" }
         val isOwnDomain = iframeHost == "familypornhd.com" || iframeHost.endsWith(".familypornhd.com")
-        Log.e(TAG, "loadLinks() iframeHost=[$iframeHost]")
-        Log.e(TAG, "loadLinks() isOwnDomain=$isOwnDomain")
 
         var emitted = false
         val trackingCallback: (ExtractorLink) -> Unit = { link ->
             emitted = true
-            Log.e(TAG, "loadLinks() EMITTED name=${link.name} url=${link.url} type=${link.type}")
             callback(link)
         }
 
         when {
             iframeSrc.contains(".m3u8") || iframeSrc.contains(".mp4") -> {
                 val isM3u8 = iframeSrc.contains(".m3u8")
-                Log.e(TAG, "loadLinks() direct media, isM3u8=$isM3u8")
                 trackingCallback(
                     newExtractorLink(
                         source = name,
@@ -293,35 +222,19 @@ class FamilyPornProvider : MainAPI() {
             iframeSrc.contains("watchstreamhd") ||
             iframeSrc.contains("videostreamingworld") ||
             iframeSrc.contains("bestwish") -> {
-                // Route to our extractor directly. Do NOT call loadExtractor
-                // here — CloudStream matches by host substring and would hand
-                // familypornhd.com URLs back to FamilyPornExtractor, which then
-                // falls through to loadExtractor again → infinite recursion.
-                Log.e(TAG, "loadLinks() -> FamilyPornExtractor")
                 try {
                     FamilyPornExtractor().getUrl(iframeSrc, data, subtitleCallback, trackingCallback)
-                } catch (e: Exception) {
-                    Log.e(TAG, "loadLinks() extractor threw", e)
-                }
+                } catch (e: Exception) { /* nothing emitted */ }
             }
 
             else -> {
-                Log.e(TAG, "loadLinks() -> loadExtractor (external host)")
                 try {
                     loadExtractor(iframeSrc, data, subtitleCallback, trackingCallback)
-                } catch (e: Exception) {
-                    Log.e(TAG, "loadLinks() loadExtractor threw", e)
-                }
+                } catch (e: Exception) { /* nothing emitted */ }
             }
         }
 
-        if (!emitted) {
-            Log.e(TAG, "loadLinks() FAILURE: 0 links emitted for [$iframeSrc]")
-            return false
-        }
-        Log.e(TAG, "loadLinks() SUCCESS")
-        Log.e(TAG, "========== loadLinks() END ==========")
-        return true
+        return emitted
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
