@@ -1,14 +1,79 @@
 package com.familyporn
 
+import android.annotation.SuppressLint
+import android.app.Dialog
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.Uri
+import android.net.http.SslError
+import android.os.Handler
+import android.os.Looper
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.SslErrorHandler
+import android.webkit.WebChromeClient
 import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import okhttp3.Interceptor
+import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
+
+object CFState {
+    var userAgent: String = ""
+}
+
+class CFInterceptor : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val original = chain.request()
+        val builder = original.newBuilder()
+
+        val defaultUa = try {
+            WebSettings.getDefaultUserAgent(CommonActivity.activity)
+        } catch (e: Exception) { "Mozilla/5.0" }
+        val ua = CFState.userAgent.takeIf { it.isNotBlank() } ?: defaultUa
+        builder.header("User-Agent", ua)
+
+        // Preserve X-Requested-With if the caller set it (FirePlayer
+        // do=getVideo requires it to return JSON, not HTML).
+        if (original.header("X-Requested-With") == null) {
+            builder.removeHeader("X-Requested-With")
+        }
+
+        val cookies = CookieManager.getInstance().getCookie(original.url.toString())
+        if (!cookies.isNullOrEmpty()) builder.header("Cookie", cookies)
+
+        // Only fill defaults; never clobber caller-supplied values.
+        if (original.header("Accept") == null)
+            builder.header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+        if (original.header("Accept-Language") == null)
+            builder.header("Accept-Language", "en-US,en;q=0.5")
+        if (original.header("Connection") == null)
+            builder.header("Connection", "keep-alive")
+        if (original.header("Upgrade-Insecure-Requests") == null)
+            builder.header("Upgrade-Insecure-Requests", "1")
+        if (original.header("Sec-Fetch-Dest") == null)
+            builder.header("Sec-Fetch-Dest", "document")
+        if (original.header("Sec-Fetch-Mode") == null)
+            builder.header("Sec-Fetch-Mode", "navigate")
+        if (original.header("Sec-Fetch-Site") == null)
+            builder.header("Sec-Fetch-Site", "same-origin")
+
+        return chain.proceed(builder.build())
+    }
+}
 
 class FamilyPornProvider : MainAPI() {
     override var mainUrl = "https://familypornhd.com"
@@ -21,21 +86,214 @@ class FamilyPornProvider : MainAPI() {
     companion object {
         val cfInterceptor = CFInterceptor()
 
-        suspend fun resolveCloudflare(url: String): Boolean = suspendCancellableCoroutine { cont ->
-            var resumed = false
-            val activity = CommonActivity.activity
-            activity?.runOnUiThread {
-                try {
-                    val dialog = CFDialog(url) { success ->
-                        if (!resumed) { resumed = true; cont.resume(success) }
+        /**
+         * Stage 1: Attempt silent off-screen resolution.
+         */
+        @SuppressLint("SetJavaScriptEnabled")
+        private suspend fun attemptSilentResolution(activity: android.app.Activity, targetUrl: String): Boolean = withContext(Dispatchers.Main) {
+            val decor = activity.window?.decorView as? ViewGroup ?: return@withContext false
+
+            suspendCancellableCoroutine { cont ->
+                val done = AtomicBoolean(false)
+                val handler = Handler(Looper.getMainLooper())
+                var checkRunnable: Runnable? = null
+                var timeoutRunnable: Runnable? = null
+
+                val webView = WebView(activity).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        activity.resources.displayMetrics.widthPixels,
+                        activity.resources.displayMetrics.heightPixels
+                    )
+                    translationX = 20000f // Off-screen rendering
+                    settings.apply {
+                        javaScriptEnabled = true
+                        domStorageEnabled = true
+                        databaseEnabled = true
+                        useWideViewPort = true
+                        loadWithOverviewMode = true
+                        cacheMode = WebSettings.LOAD_DEFAULT
+                        mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     }
-                    dialog.show()
-                } catch (e: Exception) {
-                    if (!resumed) { resumed = true; cont.resume(false) }
+
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+
+                    if (CFState.userAgent.isBlank()) {
+                        CFState.userAgent = settings.userAgentString
+                    } else {
+                        settings.userAgentString = CFState.userAgent
+                    }
+
+                    webViewClient = object : WebViewClient() {
+                        @SuppressLint("WebViewClientOnReceivedSslError")
+                        override fun onReceivedSslError(view: WebView?, h: SslErrorHandler?, error: SslError?) {
+                            h?.proceed()
+                        }
+                    }
                 }
-            } ?: run {
-                if (!resumed) { resumed = true; cont.resume(false) }
+
+                fun cleanup(success: Boolean) {
+                    if (!done.compareAndSet(false, true)) return
+                    checkRunnable?.let { handler.removeCallbacks(it) }
+                    timeoutRunnable?.let { handler.removeCallbacks(it) }
+                    runCatching {
+                        decor.removeView(webView)
+                        webView.stopLoading()
+                        webView.loadUrl("about:blank")
+                        webView.destroy()
+                    }
+                    if (success) CookieManager.getInstance().flush()
+                    if (cont.isActive) cont.resume(success)
+                }
+
+                cont.invokeOnCancellation { cleanup(false) }
+
+                checkRunnable = object : Runnable {
+                    override fun run() {
+                        if (done.get()) return
+                        val cookies = CookieManager.getInstance().getCookie(targetUrl) ?: ""
+                        val title = webView.title?.lowercase() ?: ""
+                        val isChallenge = listOf(
+                            "just a moment", "attention required",
+                            "security verification", "cloudflare"
+                        ).any { title.contains(it) }
+
+                        if (!isChallenge && cookies.contains("cf_clearance")) {
+                            cleanup(true)
+                            return
+                        }
+                        handler.postDelayed(this, 500L)
+                    }
+                }
+
+                timeoutRunnable = Runnable { cleanup(false) }
+
+                decor.addView(webView)
+                webView.loadUrl(targetUrl)
+                handler.postDelayed(checkRunnable!!, 800L)
+                handler.postDelayed(timeoutRunnable!!, 4500L) // Allow 4.5s for silent background pass
             }
+        }
+
+        /**
+         * Stage 2: Fallback interactive fullscreen dialog.
+         */
+        @SuppressLint("SetJavaScriptEnabled")
+        private suspend fun attemptInteractiveResolution(activity: android.app.Activity, targetUrl: String): Boolean = withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine { cont ->
+                val dialog = Dialog(activity, android.R.style.Theme_Black_NoTitleBar_Fullscreen).apply {
+                    setCancelable(false)
+                    setCanceledOnTouchOutside(false)
+                }
+                val done = AtomicBoolean(false)
+                val handler = Handler(Looper.getMainLooper())
+
+                val layout = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.parseColor("#1A1A1A"))
+                }
+
+                val header = TextView(activity).apply {
+                    text = "Solving Cloudflare Anti-Bot... Please Wait"
+                    setTextColor(Color.WHITE)
+                    textSize = 16f
+                    setPadding(32, 32, 32, 32)
+                }
+                layout.addView(header)
+
+                val progressBar = ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 10)
+                }
+                layout.addView(progressBar)
+
+                fun finish(success: Boolean) {
+                    if (!done.compareAndSet(false, true)) return
+                    CookieManager.getInstance().flush()
+                    runCatching { dialog.dismiss() }
+                    if (cont.isActive) cont.resume(success)
+                }
+
+                val webView = WebView(activity).apply {
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                    settings.apply {
+                        javaScriptEnabled = true
+                        domStorageEnabled = true
+                        databaseEnabled = true
+                        useWideViewPort = true
+                        loadWithOverviewMode = true
+                        cacheMode = WebSettings.LOAD_DEFAULT
+                        mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    }
+
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+
+                    if (CFState.userAgent.isBlank()) {
+                        CFState.userAgent = settings.userAgentString
+                    } else {
+                        settings.userAgentString = CFState.userAgent
+                    }
+
+                    fun checkSuccess(view: WebView?) {
+                        if (done.get()) return
+                        val title = view?.title?.lowercase() ?: ""
+                        val cookies = CookieManager.getInstance().getCookie(targetUrl) ?: ""
+
+                        val isChallenge = listOf(
+                            "just a moment", "attention required",
+                            "security verification", "cloudflare"
+                        ).any { title.contains(it) }
+
+                        if (!isChallenge && cookies.contains("cf_clearance")) {
+                            header.text = "Success! Resuming..."
+                            header.setTextColor(Color.GREEN)
+                            handler.postDelayed({ finish(true) }, 1000)
+                        }
+                    }
+
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                            progressBar.progress = newProgress
+                            progressBar.visibility = if (newProgress == 100) View.GONE else View.VISIBLE
+                            if (newProgress == 100) checkSuccess(view)
+                        }
+                    }
+
+                    webViewClient = object : WebViewClient() {
+                        @SuppressLint("WebViewClientOnReceivedSslError")
+                        override fun onReceivedSslError(view: WebView?, h: SslErrorHandler?, error: SslError?) {
+                            h?.proceed()
+                        }
+
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            checkSuccess(view)
+                        }
+                    }
+                }
+
+                layout.addView(webView)
+                dialog.setContentView(layout)
+
+                dialog.setOnDismissListener {
+                    if (!done.get()) finish(false)
+                }
+
+                dialog.show()
+                webView.loadUrl(targetUrl)
+
+                handler.postDelayed({
+                    if (!done.get()) finish(false)
+                }, 30_000L) // 30s max for interactive pass
+            }
+        }
+
+        suspend fun resolveCloudflare(url: String): Boolean {
+            val activity = CommonActivity.activity ?: return false
+            if (activity.isFinishing || activity.isDestroyed) return false
+
+            // 1. Attempt Silent Bypass
+            if (attemptSilentResolution(activity, url)) return true
+
+            // 2. Fallback to Fullscreen Checkbox UI
+            return attemptInteractiveResolution(activity, url)
         }
 
         suspend fun appGet(
@@ -90,7 +348,7 @@ class FamilyPornProvider : MainAPI() {
         }
     }
 
-       override val mainPage = mainPageOf(
+    override val mainPage = mainPageOf(
         "$mainUrl/" to "All Porn Videos",
         "$mainUrl/tag/milf/" to "Milf",
         "$mainUrl/tag/creampie/" to "Creampie",
