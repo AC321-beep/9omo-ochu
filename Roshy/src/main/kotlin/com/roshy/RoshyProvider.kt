@@ -8,27 +8,30 @@ class RoshyProvider : MainAPI() {
     override var mainUrl = "https://roshy.tv"
     override var name = "Roshy.tv"
     override var hasMainPage = true
-   override var supportedTypes = setOf(TvType.NSFW, TvType.Movie)
+    override var supportedTypes = setOf(TvType.NSFW, TvType.Movie)
     override var lang = "en"
 
-    // Main page categories mapped to their WordPress archive paths
     override val mainPage = mainPageOf(
-        MainPageData("New Subtitles", "$mainUrl/"),
-        MainPageData("Subtitles", "$mainUrl/category/english-sub-7/"),
-        MainPageData("Decensored", "$mainUrl/category/decensored-5/"),
-        MainPageData("Big Tits", "$mainUrl/category/big-tits-2/"),
-        MainPageData("Creampie", "$mainUrl/category/creampie/"),
-        MainPageData("Mature Woman", "$mainUrl/category/mature-woman-2/"),
-        MainPageData("Married Woman", "$mainUrl/category/married-woman-3/"),
-        MainPageData("Solo Work", "$mainUrl/category/solowork/")
+        MainPageData("New Subtitles", "$mainUrl"),
+        MainPageData("Decensored", "$mainUrl/category/decensored-5"),
+        MainPageData("Big Tits", "$mainUrl/category/big-tits-2"),
+        MainPageData("Creampie", "$mainUrl/category/creampie")
     )
 
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val document = app.get(request.data).document
+        // Automatically handle WordPress pagination
+        val url = if (page == 1) {
+            "${request.data}/"
+        } else {
+            "${request.data}/page/$page/"
+        }
+
+        val document = app.get(url).document
         val home = document.select("article.post-item").mapNotNull { it.toSearchResult() }
+        
         return newHomePageResponse(request.name, home)
     }
 
@@ -37,15 +40,22 @@ class RoshyProvider : MainAPI() {
         val title = titleElement?.text() ?: return null
         val href = fixUrl(titleElement.attr("href"))
         
-        val imgElement = this.selectFirst("img")
+        // Targeted specifically to the blog-img class seen in the HAR
+        val imgElement = this.selectFirst("img.blog-img") 
         val posterUrl = fixUrl(
             imgElement?.attr("data-src")?.takeIf { it.isNotEmpty() }
                 ?: imgElement?.attr("src")
                 ?: ""
         )
 
+        // Extract "ENG" and "DC" labels to display on the poster
+        val tags = this.select(".tag-label").map { it.text() }.joinToString(" | ")
+
         return newMovieSearchResponse(title, href, TvType.Movie) {
             this.posterUrl = posterUrl
+            if (tags.isNotBlank()) {
+                this.quality = tags
+            }
         }
     }
 
