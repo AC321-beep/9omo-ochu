@@ -37,7 +37,7 @@ class RoshyProvider : MainAPI() {
 
     private fun Element.toSearchResult(): SearchResponse? {
         val titleElement = this.selectFirst(".post-listing-title") ?: this.selectFirst(".post-title a")
-        val title = titleElement?.text() ?: return null
+        val baseTitle = titleElement?.text() ?: return null
         val href = fixUrl(titleElement.attr("href"))
         
         // Targeted specifically to the blog-img class to bypass SVGs and tracking pixels
@@ -48,14 +48,18 @@ class RoshyProvider : MainAPI() {
                 ?: ""
         )
 
-        // Extract "ENG" and "DC" labels to display as quality badges on the poster
+        // Extract "ENG" and "DC" labels
         val tags = this.select(".tag-label").map { it.text() }.joinToString(" | ")
+        
+        // Because `quality` only accepts Enums (HD, SD, CAM), we append custom string tags to the title instead
+        val displayTitle = if (tags.isNotBlank()) {
+            "$baseTitle [$tags]" 
+        } else {
+            baseTitle
+        }
 
-        return newMovieSearchResponse(title, href, TvType.Movie) {
+        return newMovieSearchResponse(displayTitle, href, TvType.Movie) {
             this.posterUrl = posterUrl
-            if (tags.isNotBlank()) {
-                this.quality = tags
-            }
         }
     }
 
