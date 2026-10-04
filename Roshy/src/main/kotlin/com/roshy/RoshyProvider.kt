@@ -5,22 +5,22 @@ import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 
 class RoshyProvider : MainAPI() {
-    override var mainUrl = "https://roshy.tv"[cite: 1, 4]
-    override var name = "Roshy.tv"[cite: 1, 4]
-    override val hasMainPage = true
-    override val supportedTypes = setOf(TvType.Adult, TvType.Movie)
-    override val lang = "en"[cite: 1, 4]
+    override var mainUrl = "https://roshy.tv"
+    override var name = "Roshy.tv"
+    override var hasMainPage = true
+    override var supportedTypes = setOf(TvType.Adult, TvType.Movie)
+    override var lang = "en"
 
     // Main page categories mapped to their WordPress archive paths
     override val mainPage = mainPageOf(
-        "$mainUrl/" to "New Subtitles",
-        "$mainUrl/category/english-sub-7/" to "Subtitles",[cite: 1, 4]
-        "$mainUrl/category/decensored-5/" to "Decensored",[cite: 1, 4]
-        "$mainUrl/category/big-tits-2/" to "Big Tits",[cite: 1, 4]
-        "$mainUrl/category/creampie/" to "Creampie",[cite: 1, 4]
-        "$mainUrl/category/mature-woman-2/" to "Mature Woman",[cite: 1, 4]
-        "$mainUrl/category/married-woman-3/" to "Married Woman",[cite: 1, 4]
-        "$mainUrl/category/solowork/" to "Solo Work"[cite: 1, 4]
+        MainPageData("New Subtitles", "$mainUrl/"),
+        MainPageData("Subtitles", "$mainUrl/category/english-sub-7/"),
+        MainPageData("Decensored", "$mainUrl/category/decensored-5/"),
+        MainPageData("Big Tits", "$mainUrl/category/big-tits-2/"),
+        MainPageData("Creampie", "$mainUrl/category/creampie/"),
+        MainPageData("Mature Woman", "$mainUrl/category/mature-woman-2/"),
+        MainPageData("Married Woman", "$mainUrl/category/married-woman-3/"),
+        MainPageData("Solo Work", "$mainUrl/category/solowork/")
     )
 
     override suspend fun getMainPage(
@@ -28,16 +28,16 @@ class RoshyProvider : MainAPI() {
         request: MainPageRequest
     ): HomePageResponse {
         val document = app.get(request.data).document
-        val home = document.select("article.post-item").mapNotNull { it.toSearchResult() }[cite: 1, 4]
+        val home = document.select("article.post-item").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(request.name, home)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val titleElement = this.selectFirst(".post-listing-title") ?: this.selectFirst(".post-title a")[cite: 1, 4]
+        val titleElement = this.selectFirst(".post-listing-title") ?: this.selectFirst(".post-title a")
         val title = titleElement?.text() ?: return null
         val href = fixUrl(titleElement.attr("href"))
         
-        val imgElement = this.selectFirst("img")[cite: 1, 4]
+        val imgElement = this.selectFirst("img")
         val posterUrl = fixUrl(
             imgElement?.attr("data-src")?.takeIf { it.isNotEmpty() }
                 ?: imgElement?.attr("src")
@@ -50,8 +50,8 @@ class RoshyProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val document = app.get("$mainUrl/?s=$query").document[cite: 1, 4]
-        return document.select("article.post-item").mapNotNull { it.toSearchResult() }[cite: 1, 4]
+        val document = app.get("$mainUrl/?s=$query").document
+        return document.select("article.post-item").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun load(url: String): LoadResponse {
