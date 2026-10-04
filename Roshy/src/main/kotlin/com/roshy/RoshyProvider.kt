@@ -6,7 +6,7 @@ import org.jsoup.nodes.Element
 
 class RoshyProvider : MainAPI() {
     override var mainUrl = "https://roshy.tv"
-    override var name = "Roshy.tv"
+    override var name = "RoshyTv"
     override var hasMainPage = true
     override var supportedTypes = setOf(TvType.NSFW, TvType.Movie)
     override var lang = "en"
