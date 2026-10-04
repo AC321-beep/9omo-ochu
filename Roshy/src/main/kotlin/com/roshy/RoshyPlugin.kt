@@ -8,6 +8,5 @@ import android.content.Context
 class RoshyPlugin : Plugin() {
     override fun load(context: Context) {
         registerMainAPI(RoshyProvider())
-        registerExtractorAPI(RoshyExtractor())
-    }
+       }
 }
