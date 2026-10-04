@@ -16,14 +16,16 @@ class RoshyProvider : MainAPI() {
     override var supportedTypes = setOf(TvType.NSFW, TvType.Movie)
     override var lang = "en"
 
-    // NOTE: no `override val extractors` — leave CloudStream's built-ins intact.
-
     override val mainPage = mainPageOf(
-        MainPageData("New Subtitles", "$mainUrl"),
-        MainPageData("Decensored",    "$mainUrl/category/decensored-5"),
-        MainPageData("Big Tits",      "$mainUrl/category/big-tits-2"),
-        MainPageData("Creampie",      "$mainUrl/category/creampie")
-    )
+    MainPageData("New", "$mainUrl"),
+    MainPageData("English Subs",  "$mainUrl/category/english-sub-7"),
+    MainPageData("Decensored",    "$mainUrl/category/decensored-5"),
+    MainPageData("Breast Milk",   "$mainUrl/category/breast-milk"),
+    MainPageData("Creampie",      "$mainUrl/category/creampie"),
+    MainPageData("Dead Drunk",    "$mainUrl/category/dead-drunk"),
+    MainPageData("Molester",      "$mainUrl/category/molester"),
+    MainPageData("Rape",          "$mainUrl/category/rape")
+)
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page == 1) "${request.data}/" else "${request.data}/page/$page/"
