@@ -3,6 +3,7 @@ package com.roshy
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 class RoshyProvider : MainAPI() {
@@ -14,8 +15,9 @@ class RoshyProvider : MainAPI() {
     override var supportedTypes = setOf(TvType.NSFW, TvType.Movie)
     override var lang = "en"
 
-    // Register the custom extractor so it actually gets invoked
-    override val extractors = listOf(RoshyExtractor())
+    // NOTE: We intentionally do NOT override `extractors` here.
+    // Overriding it replaces CloudStream's built-in extractor list,
+    // which kills the built-in VOE extractor that handles vloe.tv.
 
     override val mainPage = mainPageOf(
         MainPageData("New Subtitles", "$mainUrl"),
@@ -28,27 +30,16 @@ class RoshyProvider : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        Log.d(TAG, "getMainPage() page=$page request.name=${request.name} request.data=${request.data}")
-
-        // Automatically handle WordPress pagination routing
-        val url = if (page == 1) {
-            "${request.data}/"
-        } else {
-            "${request.data}/page/$page/"
-        }
-
-        Log.d(TAG, "getMainPage() fetching url=$url")
+        val url = if (page == 1) "${request.data}/" else "${request.data}/page/$page/"
 
         val document = try {
             app.get(url).document
         } catch (e: Exception) {
-            Log.e(TAG, "getMainPage() app.get failed for $url", e)
+            Log.e(TAG, "getMainPage failed for $url", e)
             return newHomePageResponse(request.name, emptyList())
         }
 
         val home = document.select("article.post-item").mapNotNull { it.toSearchResult() }
-        Log.d(TAG, "getMainPage() parsed items=${home.size}")
-
         return newHomePageResponse(request.name, home)
     }
 
@@ -57,7 +48,6 @@ class RoshyProvider : MainAPI() {
         val baseTitle = titleElement?.text() ?: return null
         val href = fixUrl(titleElement.attr("href"))
 
-        // Targeted specifically to the blog-img class to bypass SVGs and tracking pixels
         val imgElement = this.selectFirst("img.blog-img")
         val posterUrl = fixUrl(
             imgElement?.attr("data-src")?.takeIf { it.isNotEmpty() }
@@ -65,15 +55,8 @@ class RoshyProvider : MainAPI() {
                 ?: ""
         )
 
-        // Extract "ENG" and "DC" labels
         val tags = this.select(".tag-label").map { it.text() }.joinToString(" | ")
-
-        // Because `quality` only accepts Enums (HD, SD, CAM), we append custom string tags to the title instead
-        val displayTitle = if (tags.isNotBlank()) {
-            "$baseTitle [$tags]"
-        } else {
-            baseTitle
-        }
+        val displayTitle = if (tags.isNotBlank()) "$baseTitle [$tags]" else baseTitle
 
         return newMovieSearchResponse(displayTitle, href, TvType.Movie) {
             this.posterUrl = posterUrl
@@ -81,25 +64,20 @@ class RoshyProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        Log.d(TAG, "search() query=$query")
         val document = try {
             app.get("$mainUrl/?s=$query").document
         } catch (e: Exception) {
-            Log.e(TAG, "search() app.get failed", e)
+            Log.e(TAG, "search failed", e)
             return emptyList()
         }
-        val results = document.select("article.post-item").mapNotNull { it.toSearchResult() }
-        Log.d(TAG, "search() results=${results.size}")
-        return results
+        return document.select("article.post-item").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        Log.d(TAG, "load() url=$url")
-
         val document = try {
             app.get(url).document
         } catch (e: Exception) {
-            Log.e(TAG, "load() app.get failed for $url", e)
+            Log.e(TAG, "load failed for $url", e)
             throw e
         }
 
@@ -109,8 +87,6 @@ class RoshyProvider : MainAPI() {
             it.attr("data-src").ifEmpty { it.attr("src") }
         }
         val description = document.selectFirst(".entry-content, .description")?.text()
-
-        Log.d(TAG, "load() parsed title=$title poster=$poster")
 
         return newMovieLoadResponse(title, url, TvType.Movie, url) {
             this.posterUrl = poster?.let { fixUrl(it) }
@@ -124,92 +100,90 @@ class RoshyProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "==================================================")
-        Log.d(TAG, "loadLinks() START data=$data isCensored=$isCensored")
+        Log.d(TAG, "===== loadLinks START data=$data =====")
 
         val document = try {
             app.get(data).document
         } catch (e: Exception) {
-            Log.e(TAG, "loadLinks() app.get() failed for $data", e)
+            Log.e(TAG, "loadLinks: app.get failed", e)
             return false
         }
 
-        Log.d(TAG, "loadLinks() page title=${document.title()}")
+        val seen = linkedSetOf<String>()
+        var count = 0
 
-        val candidates = document.select("iframe, source, video")
-        Log.d(TAG, "loadLinks() candidate elements (iframe, source, video) count=${candidates.size}")
+        suspend fun processDoc(doc: Document, referer: String) {
+            val playerEls = doc.select(
+                "div.beeteam368-player-wrapper iframe, " +
+                "div.beeteam368-player-wrapper video, " +
+                "div.beeteam368-player-wrapper source"
+            )
 
-        if (candidates.isEmpty()) {
-            Log.w(TAG, "loadLinks() No iframe/source/video found. Logging src-like elements:")
-
-            document.select("[src], [data-src], [data-lazy-src], [data-litespeed-src]").forEach { el ->
-                Log.d(
-                    TAG,
-                    "  src-like: <${el.tagName()}> " +
-                        el.attributes().joinToString(" ") { "${it.key}=${it.value}" }
-                )
+            if (playerEls.isEmpty()) {
+                Log.d(TAG, "  no player elements in doc (${doc.title()})")
             }
 
-            Log.d(TAG, "loadLinks() script count=${document.select("script").size}")
-            document.select("script").forEachIndexed { i, script ->
-                val text = script.data()
-                if (
-                    text.contains("iframe", true) ||
-                    text.contains("m3u8", true) ||
-                    text.contains(".mp4", true) ||
-                    text.contains("player", true)
-                ) {
-                    Log.d(TAG, "  script[$i] contains player hints: ${text.take(500)}...")
-                }
-            }
+            playerEls.forEach { el ->
+                val src = el.attr("src")
+                    .ifEmpty { el.attr("data-src") }
+                    .ifEmpty { el.attr("data-lazy-src") }
+                    .ifEmpty { el.attr("data-litespeed-src") }
 
-            // Also log inline scripts (the ones that use <script> without src, but with html body)
-            document.select("script:not([src])").forEachIndexed { i, script ->
-                val html = script.html()
-                if (
-                    html.contains("iframe", true) ||
-                    html.contains("m3u8", true) ||
-                    html.contains(".mp4", true) ||
-                    html.contains("player", true)
-                ) {
-                    Log.d(TAG, "  inline-script[$i] hints: ${html.take(500)}...")
+                val url = fixUrl(src)
+                Log.d(TAG, "  player el <${el.tagName()}> src='$src' fixed='$url'")
+
+                if (url.isNotBlank() && url.startsWith("http") && seen.add(url)) {
+                    Log.d(TAG, "  → loadExtractor($url) referer=$referer")
+                    try {
+                        loadExtractor(url, referer, subtitleCallback, callback)
+                        count++
+                    } catch (e: Exception) {
+                        Log.e(TAG, "  loadExtractor threw for $url", e)
+                    }
                 }
             }
         }
 
-        var found = 0
+        // 1. Main page
+        processDoc(document, data)
 
-        candidates.forEachIndexed { index, element ->
-            Log.d(TAG, "[$index] tag=${element.tagName()} html=${element.outerHtml().take(300)}")
-
-            val src = element.attr("src")
-                .ifEmpty { element.attr("data-src") }
-                .ifEmpty { element.attr("data-lazy-src") }
-                .ifEmpty { element.attr("data-litespeed-src") }
-
-            Log.d(TAG, "[$index] raw src='$src'")
-
-            // fixUrl() automatically converts protocol-relative links (e.g., "//dood.to/...") to "https://dood.to/..."
-            val fixedUrl = fixUrl(src)
-            Log.d(TAG, "[$index] fixedUrl='$fixedUrl'")
-
-            if (fixedUrl.isNotBlank() && fixedUrl.startsWith("http")) {
-                found++
-                Log.d(TAG, "[$index] calling loadExtractor for $fixedUrl")
-
-                try {
-                    loadExtractor(fixedUrl, data, subtitleCallback, callback)
-                    Log.d(TAG, "[$index] loadExtractor returned")
-                } catch (e: Exception) {
-                    Log.e(TAG, "[$index] loadExtractor threw for $fixedUrl", e)
+        // 2. Yoast JSON-LD fallback
+        document.select("script.yoast-schema-graph, script[type=application/ld+json]").forEach { s ->
+            val json = s.data()
+            Regex(""""embedUrl"\s*:\s*"([^"]+)"""").findAll(json).forEach { m ->
+                val url = m.groupValues[1].replace("\\/", "/")
+                if (seen.add(url)) {
+                    Log.d(TAG, "→ loadExtractor (yoast embedUrl) $url")
+                    try {
+                        loadExtractor(url, data, subtitleCallback, callback)
+                        count++
+                    } catch (e: Exception) {
+                        Log.e(TAG, "loadExtractor (yoast) threw for $url", e)
+                    }
                 }
-            } else {
-                Log.w(TAG, "[$index] skipping: blank or not http")
             }
         }
 
-        Log.d(TAG, "loadLinks() END found=$found")
-        Log.d(TAG, "==================================================")
-        return found > 0
+        // 3. Mirror links
+        val mirrors = document.select("a.btn-p-group-item[href*=ml-url]")
+            .mapNotNull { el ->
+                el.attr("href").takeIf { it.isNotBlank() }?.let { fixUrl(it) }
+            }
+            .distinct()
+
+        Log.d(TAG, "Found ${mirrors.size} mirror link(s)")
+
+        for (mirrorUrl in mirrors) {
+            try {
+                Log.d(TAG, "Fetching mirror: $mirrorUrl")
+                val mirrorDoc = app.get(mirrorUrl, referer = data).document
+                processDoc(mirrorDoc, mirrorUrl)
+            } catch (e: Exception) {
+                Log.e(TAG, "mirror fetch failed: $mirrorUrl", e)
+            }
+        }
+
+        Log.d(TAG, "===== loadLinks END count=$count uniqueUrls=${seen.size} =====")
+        return count > 0
     }
 }
