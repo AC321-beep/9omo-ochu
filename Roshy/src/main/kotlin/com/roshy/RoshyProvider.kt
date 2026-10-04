@@ -15,8 +15,9 @@ class RoshyProvider : MainAPI() {
     override var supportedTypes = setOf(TvType.NSFW, TvType.Movie)
     override var lang = "en"
 
-    // Do NOT override `extractors` — CloudStream's built-in VOE extractor
-    // is what handles vloe.tv/e/... and it will be clobbered if we do.
+    // Do NOT override `extractors` — CloudStream's built-in VOE / StreamTape /
+    // MixDrop / FileMoon / DoodStream extractors live there. Overriding the
+    // list wipes them out and only your custom extractor survives.
 
     override val mainPage = mainPageOf(
         MainPageData("New Subtitles", "$mainUrl"),
@@ -30,13 +31,17 @@ class RoshyProvider : MainAPI() {
         request: MainPageRequest
     ): HomePageResponse {
         val url = if (page == 1) "${request.data}/" else "${request.data}/page/$page/"
+        Log.e(TAG, "getMainPage url=$url")
+
         val document = try {
             app.get(url).document
         } catch (e: Exception) {
             Log.e(TAG, "getMainPage failed for $url", e)
             return newHomePageResponse(request.name, emptyList())
         }
+
         val home = document.select("article.post-item").mapNotNull { it.toSearchResult() }
+        Log.e(TAG, "getMainPage parsed items=${home.size}")
         return newHomePageResponse(request.name, home)
     }
 
@@ -63,16 +68,20 @@ class RoshyProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        Log.e(TAG, "search query=$query")
         val document = try {
             app.get("$mainUrl/?s=$query").document
         } catch (e: Exception) {
             Log.e(TAG, "search failed", e)
             return emptyList()
         }
-        return document.select("article.post-item").mapNotNull { it.toSearchResult() }
+        val results = document.select("article.post-item").mapNotNull { it.toSearchResult() }
+        Log.e(TAG, "search results=${results.size}")
+        return results
     }
 
     override suspend fun load(url: String): LoadResponse {
+        Log.e(TAG, "load url=$url")
         val document = try {
             app.get(url).document
         } catch (e: Exception) {
@@ -102,7 +111,8 @@ class RoshyProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d(TAG, "===== loadLinks START data=$data =====")
+        Log.e(TAG, "==================================================")
+        Log.e(TAG, "loadLinks START data=$data")
 
         val document = try {
             app.get(data).document
@@ -120,21 +130,25 @@ class RoshyProvider : MainAPI() {
                 "div.beeteam368-player-wrapper video, " +
                 "div.beeteam368-player-wrapper source"
             )
+            Log.e(TAG, "  processDoc referer=$referer playerEls=${playerEls.size}")
 
-            playerEls.forEach { el ->
+            playerEls.forEachIndexed { i, el ->
                 val src = el.attr("src")
                     .ifEmpty { el.attr("data-src") }
                     .ifEmpty { el.attr("data-lazy-src") }
                     .ifEmpty { el.attr("data-litespeed-src") }
 
                 val url = fixUrl(src)
+                Log.e(TAG, "  player[$i] <${el.tagName()}> src='$src' fixed='$url'")
+
                 if (url.isNotBlank() && url.startsWith("http") && seen.add(url)) {
-                    Log.d(TAG, "→ loadExtractor($url) referer=$referer")
+                    Log.e(TAG, "  -> loadExtractor($url) referer=$referer")
                     try {
                         loadExtractor(url, referer, subtitleCallback, callback)
                         count++
+                        Log.e(TAG, "  loadExtractor returned, count=$count")
                     } catch (e: Exception) {
-                        Log.e(TAG, "loadExtractor threw for $url", e)
+                        Log.e(TAG, "  loadExtractor threw for $url", e)
                     }
                 }
             }
@@ -149,32 +163,48 @@ class RoshyProvider : MainAPI() {
                 .findAll(s.data())
                 .forEach { m ->
                     val url = m.groupValues[1].replace("\\/", "/")
+                    Log.e(TAG, "  yoast embedUrl=$url seen=${!seen.contains(url)}")
                     if (seen.add(url)) {
-                        Log.d(TAG, "→ loadExtractor (yoast) $url")
+                        Log.e(TAG, "  -> loadExtractor (yoast) $url")
                         try {
                             loadExtractor(url, data, subtitleCallback, callback)
                             count++
                         } catch (e: Exception) {
-                            Log.e(TAG, "loadExtractor (yoast) threw", e)
+                            Log.e(TAG, "  loadExtractor (yoast) threw for $url", e)
                         }
                     }
                 }
         }
 
-        // 3) mirrors
-        document.select("a.btn-p-group-item[href*=ml-url]")
+        // 3) mirrors — with diagnostic hash + iframe dump
+        val mirrors = document.select("a.btn-p-group-item[href*=ml-url]")
             .mapNotNull { it.attr("href").takeIf(String::isNotBlank)?.let(::fixUrl) }
             .distinct()
-            .forEach { mirrorUrl ->
-                try {
-                    val mirrorDoc = app.get(mirrorUrl, referer = data).document
-                    processDoc(mirrorDoc, mirrorUrl)
-                } catch (e: Exception) {
-                    Log.e(TAG, "mirror fetch failed: $mirrorUrl", e)
-                }
-            }
 
-        Log.d(TAG, "===== loadLinks END count=$count =====")
+        Log.e(TAG, "  mirror count=${mirrors.size}")
+
+        mirrors.forEach { mirrorUrl ->
+            try {
+                Log.e(TAG, "  Fetching mirror: $mirrorUrl")
+                val mirrorDoc = app.get(mirrorUrl, referer = data).document
+
+                val bodyHash = mirrorDoc.html().hashCode()
+                val bodySize = mirrorDoc.html().length
+                Log.e(TAG, "    response hash=$bodyHash size=$bodySize")
+
+                // Dump every iframe (not just the scoped one) so we see what's really there
+                mirrorDoc.select("iframe").forEachIndexed { i, el ->
+                    Log.e(TAG, "    iframe[$i] src='${el.attr("src")}' data-src='${el.attr("data-src")}'")
+                }
+
+                processDoc(mirrorDoc, mirrorUrl)
+            } catch (e: Exception) {
+                Log.e(TAG, "  mirror fetch failed: $mirrorUrl", e)
+            }
+        }
+
+        Log.e(TAG, "loadLinks END count=$count")
+        Log.e(TAG, "==================================================")
         return count > 0
     }
 }
