@@ -22,7 +22,7 @@ class RoshyProvider : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        // Automatically handle WordPress pagination
+        // Automatically handle WordPress pagination routing
         val url = if (page == 1) {
             "${request.data}/"
         } else {
@@ -40,7 +40,7 @@ class RoshyProvider : MainAPI() {
         val title = titleElement?.text() ?: return null
         val href = fixUrl(titleElement.attr("href"))
         
-        // Targeted specifically to the blog-img class seen in the HAR
+        // Targeted specifically to the blog-img class to bypass SVGs and tracking pixels
         val imgElement = this.selectFirst("img.blog-img") 
         val posterUrl = fixUrl(
             imgElement?.attr("data-src")?.takeIf { it.isNotEmpty() }
@@ -48,7 +48,7 @@ class RoshyProvider : MainAPI() {
                 ?: ""
         )
 
-        // Extract "ENG" and "DC" labels to display on the poster
+        // Extract "ENG" and "DC" labels to display as quality badges on the poster
         val tags = this.select(".tag-label").map { it.text() }.joinToString(" | ")
 
         return newMovieSearchResponse(title, href, TvType.Movie) {
@@ -67,6 +67,7 @@ class RoshyProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
         val title = document.selectFirst("h1.entry-title, h1")?.text()?.trim() ?: "Roshy Video"
+        
         val poster = document.selectFirst(".post-featured-image img, .entry-content img")?.let {
             it.attr("data-src").ifEmpty { it.attr("src") }
         }
@@ -86,10 +87,19 @@ class RoshyProvider : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
         
-        document.select("iframe, source").forEach { element ->
-            val src = element.attr("src").ifEmpty { element.attr("data-src") }
-            if (src.isNotBlank()) {
-                loadExtractor(src, data, subtitleCallback, callback)
+        // Target iframes, sources, and also look for raw video tags
+        document.select("iframe, source, video").forEach { element ->
+            // Catch standard src, and common lazy-loading attributes used by WordPress themes
+            val src = element.attr("src")
+                .ifEmpty { element.attr("data-src") }
+                .ifEmpty { element.attr("data-lazy-src") }
+                .ifEmpty { element.attr("data-litespeed-src") }
+            
+            // fixUrl() automatically converts protocol-relative links (e.g., "//dood.to/...") to "https://dood.to/..."
+            val fixedUrl = fixUrl(src)
+            
+            if (fixedUrl.isNotBlank() && fixedUrl.startsWith("http")) {
+                loadExtractor(fixedUrl, data, subtitleCallback, callback)
             }
         }
         
