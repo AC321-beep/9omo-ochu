@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.roshy">
+    
+    <!-- No standard Android application elements are needed here. -->
+    <!-- Cloudstream parses this purely for the package identifier. -->
+    
+</manifest>
