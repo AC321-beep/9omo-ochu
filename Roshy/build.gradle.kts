@@ -1,9 +1,9 @@
 cloudstream {
-    description = "Contains all the videos from Perverzija"
+    description = "Roshy.tv Provider"
     authors = listOf("AC321-beep")
     status = 1
-    tvTypes = listOf("NSFW")
-    iconUrl = "https://www.google.com/s2/favicons?domain=tube.perverzija.com&sz=%size%"
+    tvTypes = listOf("NSFW", "Movie")
+    iconUrl = "https://www.google.com/s2/favicons?domain=roshy.tv&sz=128"
     language = "en"
-    version = 1
+    version = 2
 }
