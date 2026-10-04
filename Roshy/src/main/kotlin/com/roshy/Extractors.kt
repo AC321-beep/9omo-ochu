@@ -1,10 +1,8 @@
 package com.roshy
 
 import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.utils.ExtractorApi
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.* // Added wildcard for newExtractorLink
 
 class RoshyExtractor : ExtractorApi() {
     override val name: String = "Roshy"
@@ -20,7 +18,7 @@ class RoshyExtractor : ExtractorApi() {
         // If the URL parsed in RoshyProvider.kt is already a direct link
         if (url.endsWith(".mp4") || url.endsWith(".m3u8") || url.contains(".m3u8?")) {
             callback.invoke(
-                ExtractorLink(
+                newExtractorLink( // Changed from ExtractorLink to newExtractorLink
                     source = this.name,
                     name = this.name,
                     url = url,
