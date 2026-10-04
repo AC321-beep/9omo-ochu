@@ -8,7 +8,7 @@ class RoshyProvider : MainAPI() {
     override var mainUrl = "https://roshy.tv"
     override var name = "Roshy.tv"
     override var hasMainPage = true
-    override var supportedTypes = setOf(TvType.Adult, TvType.Movie)
+   override var supportedTypes = setOf(TvType.NSFW, TvType.Movie)
     override var lang = "en"
 
     // Main page categories mapped to their WordPress archive paths
