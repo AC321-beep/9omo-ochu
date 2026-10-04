@@ -28,7 +28,7 @@ class RoshyExtractor : ExtractorApi() {
                 }
             )
         } else {
-            // Iframe scraping logic goes here
+            // Iframe scraping logic goes here if Roshy hosts their own custom iframes
         }
     }
 }
