@@ -15,15 +15,14 @@ class RoshyProvider : MainAPI() {
     override var supportedTypes = setOf(TvType.NSFW, TvType.Movie)
     override var lang = "en"
 
-    // NOTE: We intentionally do NOT override `extractors` here.
-    // Overriding it replaces CloudStream's built-in extractor list,
-    // which kills the built-in VOE extractor that handles vloe.tv.
+    // Do NOT override `extractors` — CloudStream's built-in VOE extractor
+    // is what handles vloe.tv/e/... and it will be clobbered if we do.
 
     override val mainPage = mainPageOf(
         MainPageData("New Subtitles", "$mainUrl"),
-        MainPageData("Decensored", "$mainUrl/category/decensored-5"),
-        MainPageData("Big Tits", "$mainUrl/category/big-tits-2"),
-        MainPageData("Creampie", "$mainUrl/category/creampie")
+        MainPageData("Decensored",    "$mainUrl/category/decensored-5"),
+        MainPageData("Big Tits",      "$mainUrl/category/big-tits-2"),
+        MainPageData("Creampie",      "$mainUrl/category/creampie")
     )
 
     override suspend fun getMainPage(
@@ -31,29 +30,29 @@ class RoshyProvider : MainAPI() {
         request: MainPageRequest
     ): HomePageResponse {
         val url = if (page == 1) "${request.data}/" else "${request.data}/page/$page/"
-
         val document = try {
             app.get(url).document
         } catch (e: Exception) {
             Log.e(TAG, "getMainPage failed for $url", e)
             return newHomePageResponse(request.name, emptyList())
         }
-
         val home = document.select("article.post-item").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(request.name, home)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val titleElement = this.selectFirst(".post-listing-title") ?: this.selectFirst(".post-title a")
-        val baseTitle = titleElement?.text() ?: return null
+        val titleElement = this.selectFirst(".post-listing-title")
+            ?: this.selectFirst(".post-title a")
+            ?: return null
+        val baseTitle = titleElement.text()
         val href = fixUrl(titleElement.attr("href"))
 
-        val imgElement = this.selectFirst("img.blog-img")
-        val posterUrl = fixUrl(
-            imgElement?.attr("data-src")?.takeIf { it.isNotEmpty() }
-                ?: imgElement?.attr("src")
-                ?: ""
-        )
+        val img = this.selectFirst("img.blog-img")
+        val rawPoster = img?.attr("data-src")?.takeIf { it.isNotBlank() }
+            ?: img?.attr("src").orEmpty()
+
+        // Skip "data:image/svg+xml,..." placeholders used by perfmatters-lazy
+        val posterUrl = if (rawPoster.startsWith("http")) fixUrl(rawPoster) else ""
 
         val tags = this.select(".tag-label").map { it.text() }.joinToString(" | ")
         val displayTitle = if (tags.isNotBlank()) "$baseTitle [$tags]" else baseTitle
@@ -83,13 +82,16 @@ class RoshyProvider : MainAPI() {
 
         val title = document.selectFirst("h1.entry-title, h1")?.text()?.trim() ?: "Roshy Video"
 
-        val poster = document.selectFirst(".post-featured-image img, .entry-content img")?.let {
-            it.attr("data-src").ifEmpty { it.attr("src") }
-        }
+        val rawPoster = document
+            .selectFirst(".post-featured-image img, .entry-content img")
+            ?.let { it.attr("data-src").ifEmpty { it.attr("src") } }
+            .orEmpty()
+
+        val poster = if (rawPoster.startsWith("http")) fixUrl(rawPoster) else null
         val description = document.selectFirst(".entry-content, .description")?.text()
 
         return newMovieLoadResponse(title, url, TvType.Movie, url) {
-            this.posterUrl = poster?.let { fixUrl(it) }
+            this.posterUrl = poster
             this.plot = description
         }
     }
@@ -119,10 +121,6 @@ class RoshyProvider : MainAPI() {
                 "div.beeteam368-player-wrapper source"
             )
 
-            if (playerEls.isEmpty()) {
-                Log.d(TAG, "  no player elements in doc (${doc.title()})")
-            }
-
             playerEls.forEach { el ->
                 val src = el.attr("src")
                     .ifEmpty { el.attr("data-src") }
@@ -130,60 +128,53 @@ class RoshyProvider : MainAPI() {
                     .ifEmpty { el.attr("data-litespeed-src") }
 
                 val url = fixUrl(src)
-                Log.d(TAG, "  player el <${el.tagName()}> src='$src' fixed='$url'")
-
                 if (url.isNotBlank() && url.startsWith("http") && seen.add(url)) {
-                    Log.d(TAG, "  → loadExtractor($url) referer=$referer")
+                    Log.d(TAG, "→ loadExtractor($url) referer=$referer")
                     try {
                         loadExtractor(url, referer, subtitleCallback, callback)
                         count++
                     } catch (e: Exception) {
-                        Log.e(TAG, "  loadExtractor threw for $url", e)
+                        Log.e(TAG, "loadExtractor threw for $url", e)
                     }
                 }
             }
         }
 
-        // 1. Main page
+        // 1) main page
         processDoc(document, data)
 
-        // 2. Yoast JSON-LD fallback
+        // 2) Yoast JSON-LD embedUrl
         document.select("script.yoast-schema-graph, script[type=application/ld+json]").forEach { s ->
-            val json = s.data()
-            Regex(""""embedUrl"\s*:\s*"([^"]+)"""").findAll(json).forEach { m ->
-                val url = m.groupValues[1].replace("\\/", "/")
-                if (seen.add(url)) {
-                    Log.d(TAG, "→ loadExtractor (yoast embedUrl) $url")
-                    try {
-                        loadExtractor(url, data, subtitleCallback, callback)
-                        count++
-                    } catch (e: Exception) {
-                        Log.e(TAG, "loadExtractor (yoast) threw for $url", e)
+            Regex(""""embedUrl"\s*:\s*"([^"]+)"""")
+                .findAll(s.data())
+                .forEach { m ->
+                    val url = m.groupValues[1].replace("\\/", "/")
+                    if (seen.add(url)) {
+                        Log.d(TAG, "→ loadExtractor (yoast) $url")
+                        try {
+                            loadExtractor(url, data, subtitleCallback, callback)
+                            count++
+                        } catch (e: Exception) {
+                            Log.e(TAG, "loadExtractor (yoast) threw", e)
+                        }
                     }
                 }
-            }
         }
 
-        // 3. Mirror links
-        val mirrors = document.select("a.btn-p-group-item[href*=ml-url]")
-            .mapNotNull { el ->
-                el.attr("href").takeIf { it.isNotBlank() }?.let { fixUrl(it) }
-            }
+        // 3) mirrors
+        document.select("a.btn-p-group-item[href*=ml-url]")
+            .mapNotNull { it.attr("href").takeIf(String::isNotBlank)?.let(::fixUrl) }
             .distinct()
-
-        Log.d(TAG, "Found ${mirrors.size} mirror link(s)")
-
-        for (mirrorUrl in mirrors) {
-            try {
-                Log.d(TAG, "Fetching mirror: $mirrorUrl")
-                val mirrorDoc = app.get(mirrorUrl, referer = data).document
-                processDoc(mirrorDoc, mirrorUrl)
-            } catch (e: Exception) {
-                Log.e(TAG, "mirror fetch failed: $mirrorUrl", e)
+            .forEach { mirrorUrl ->
+                try {
+                    val mirrorDoc = app.get(mirrorUrl, referer = data).document
+                    processDoc(mirrorDoc, mirrorUrl)
+                } catch (e: Exception) {
+                    Log.e(TAG, "mirror fetch failed: $mirrorUrl", e)
+                }
             }
-        }
 
-        Log.d(TAG, "===== loadLinks END count=$count uniqueUrls=${seen.size} =====")
+        Log.d(TAG, "===== loadLinks END count=$count =====")
         return count > 0
     }
 }
